@@ -1,0 +1,27 @@
+{
+  "performance": {
+    "total_trades": 1,
+    "winning_trades": 1,
+    "total_pnl": 0.09075,
+    "max_drawdown": 0,
+    "start_balance": 0.0,
+    "current_balance": 0.0
+  },
+  "trades": [
+    {
+      "side": "LONG",
+      "entry_price": 1.1204,
+      "exit_price": 1.1325,
+      "quantity": 7.5,
+      "pnl": 0.09075,
+      "pnl_percent": 1.079971438771867,
+      "entry_time": "2025-07-20T17:48:15.206875",
+      "exit_time": "2025-07-20T17:51:12.160524",
+      "duration_minutes": 2.9492278,
+      "entry_reason": "oversold RSI 29",
+      "exit_reason": "profit target"
+    }
+  ],
+  "final_balance": 0.0,
+  "timestamp": "2025-07-20T18:00:58.487367"
+}

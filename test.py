@@ -591,4 +591,4 @@ async def main():
     print(f"\n{Colors.BOLD}✅ Debug suite complete!{Colors.END}")
 
 if __name__ == "__main__":
-    asyncio.run(main()
+    asyncio.run(main())
