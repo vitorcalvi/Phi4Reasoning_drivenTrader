@@ -1,239 +1,199 @@
 #!/usr/bin/env python3
 """
-Test script to verify LM Studio connection and model responses
+Debug script to identify JSON parsing issues with Phi-4
 """
 import requests
 import json
 import sys
-from datetime import datetime
+import time
 
 
-def test_lm_studio_connection(url="http://localhost:1234"):
-    """Test basic connection to LM Studio"""
-    print(f"🔍 Testing connection to LM Studio at {url}")
+def test_trading_decision_debug(url="http://localhost:1234", model="local-model"):
+    """Test trading decisions with detailed debugging"""
     
-    try:
-        # Test if server is running
-        response = requests.get(url, timeout=5)
-        print(f"✅ LM Studio server is running")
-        return True
-    except requests.exceptions.ConnectionError:
-        print(f"❌ Cannot connect to LM Studio at {url}")
-        print("📝 Make sure LM Studio is running and server is started")
-        return False
-    except Exception as e:
-        print(f"❌ Connection error: {e}")
-        return False
-
-
-def test_model_response(url="http://localhost:1234", model="local-model"):
-    """Test if model can generate proper responses"""
-    print(f"\n🤖 Testing model response...")
+    # Simulated market conditions
+    test_cases = [
+        {
+            "name": "Oversold",
+            "price": 3700.00,
+            "rsi": 28.5,
+            "volume": 2.3,
+            "position": "LONG"
+        },
+        {
+            "name": "Overbought",
+            "price": 3750.00,
+            "rsi": 72.0,
+            "volume": 1.8,
+            "position": "SHORT"
+        },
+        {
+            "name": "Neutral",
+            "price": 3720.00,
+            "rsi": 50.0,
+            "volume": 1.0,
+            "position": None
+        }
+    ]
     
-    endpoint = f"{url}/v1/chat/completions"
-    
-    # Simple test prompt
-    test_payload = {
-        "model": model,
-        "messages": [
-            {
-                "role": "system",
-                "content": "You are a helpful assistant. Always respond in JSON format."
-            },
-            {
-                "role": "user",
-                "content": "Respond with a JSON object containing: status (string) and timestamp (string). Nothing else."
-            }
-        ],
-        "temperature": 0.1,
-        "max_tokens": 100
-    }
-    
-    try:
-        response = requests.post(endpoint, json=test_payload, timeout=30)
+    for i, test in enumerate(test_cases):
+        print(f"\n{'='*60}")
+        print(f"Test {i+1}: {test['name']} Condition")
+        print(f"{'='*60}")
         
-        if response.status_code == 200:
-            result = response.json()
-            
-            if 'choices' in result and len(result['choices']) > 0:
-                content = result['choices'][0]['message']['content']
-                print(f"✅ Model responded successfully")
-                print(f"📄 Response: {content}")
-                
-                # Try to parse as JSON
-                try:
-                    parsed = json.loads(content)
-                    print(f"✅ Response is valid JSON")
-                    return True
-                except json.JSONDecodeError:
-                    print(f"⚠️ Response is not valid JSON - model may need better prompting")
-                    return False
-            else:
-                print(f"❌ Unexpected response format")
-                return False
-        else:
-            print(f"❌ Request failed with status: {response.status_code}")
-            print(f"📄 Response: {response.text}")
-            return False
-            
-    except requests.exceptions.Timeout:
-        print(f"❌ Request timed out - model may be too slow or not loaded")
-        return False
-    except Exception as e:
-        print(f"❌ Error: {e}")
-        return False
+        # Build prompt similar to the bot
+        prompt = f"""Price: ${test['price']:.2f}
+RSI: {test['rsi']:.1f}
+Volume: {test['volume']:.1f}x
+Position: {test['position'] if test['position'] else 'None'}
 
+Output only this JSON:
+{{
+    "action": "LONG",
+    "confidence": 0.8,
+    "reason": "oversold"
+}}
 
-def test_trading_decision(url="http://localhost:1234", model="local-model"):
-    """Test if model can make trading decisions"""
-    print(f"\n💹 Testing trading decision capability...")
-    
-    endpoint = f"{url}/v1/chat/completions"
-    
-    # Trading decision prompt
-    trading_payload = {
-        "model": model,
-        "messages": [
-            {
-                "role": "system",
-                "content": """You are an expert crypto trading AI. Analyze market data and make trading decisions.
-Always respond with valid JSON only. Consider risk management and market conditions carefully."""
-            },
-            {
-                "role": "user",
-                "content": """
-TRADING DECISION REQUIRED
-
-CURRENT MARKET DATA:
-- Price: $2,345.67
-- RSI: 32.5 (oversold)
-- Volume Ratio: 2.3x average
-- Spread: 0.03%
-- Order Book Imbalance: 0.15 (bid heavy)
-
-POSITION: No position
-
-PERFORMANCE:
-- Recent Win Rate: 60%
-- Consecutive Losses: 0
-
-Respond with JSON only:
-{
-    "action": "LONG" | "SHORT" | "WAIT",
-    "confidence": 0.0 to 1.0,
-    "reason": "brief explanation",
-    "position_size": number (USDT),
-    "stop_loss": price,
-    "take_profit": price
-}
-"""
-            }
-        ],
-        "temperature": 0.1,
-        "max_tokens": 500
-    }
-    
-    try:
-        print("⏳ Waiting for model response (this may take a moment)...")
-        response = requests.post(endpoint, json=trading_payload, timeout=60)
+action: LONG, SHORT, CLOSE, or WAIT"""
         
-        if response.status_code == 200:
-            result = response.json()
+        payload = {
+            "model": model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are an expert crypto trading AI. Always respond with valid JSON only."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            "temperature": 0.1,
+            "max_tokens": 1000
+        }
+        
+        try:
+            print(f"📤 Sending request...")
+            response = requests.post(f"{url}/v1/chat/completions", json=payload, timeout=30)
             
-            if 'choices' in result and len(result['choices']) > 0:
+            if response.status_code == 200:
+                result = response.json()
                 content = result['choices'][0]['message']['content']
                 
-                # Extract JSON from response
+                print(f"\n📥 Raw Response ({len(content)} chars):")
+                print("-" * 40)
+                print(content)
+                print("-" * 40)
+                
+                # Check for <think> tags
+                if '<think>' in content:
+                    print("\n🧠 Found <think> tags, extracting content after </think>")
+                    if '</think>' in content:
+                        content = content.split('</think>')[-1].strip()
+                        print(f"📄 Content after removing think tags:")
+                        print(content)
+                    else:
+                        print("⚠️ WARNING: <think> tag found but no closing </think>!")
+                
+                # Try to find JSON
                 json_start = content.find('{')
-                json_end = content.rfind('}') + 1
-                
-                if json_start != -1 and json_end > json_start:
+                if json_start != -1:
+                    print(f"\n🔍 Found JSON starting at position {json_start}")
+                    
+                    # Show what's around position 20 (where error occurs)
+                    if len(content) > 20:
+                        print(f"📍 Content around char 20: '{content[15:25]}'")
+                        print(f"📍 First 30 chars: '{content[:30]}'")
+                    
+                    # Find matching closing brace
+                    brace_count = 0
+                    json_end = json_start
+                    for idx in range(json_start, len(content)):
+                        if content[idx] == '{':
+                            brace_count += 1
+                        elif content[idx] == '}':
+                            brace_count -= 1
+                            if brace_count == 0:
+                                json_end = idx + 1
+                                break
+                    
                     json_str = content[json_start:json_end]
+                    print(f"\n📋 Extracted JSON string:")
+                    print(json_str)
+                    
+                    # Show each character with position for debugging
+                    print(f"\n🔬 Character-by-character analysis:")
+                    for idx, char in enumerate(json_str[:40]):  # First 40 chars
+                        if char == '\n':
+                            print(f"  [{idx:2d}]: \\n (newline)")
+                        elif char == '\t':
+                            print(f"  [{idx:2d}]: \\t (tab)")
+                        elif char == ' ':
+                            print(f"  [{idx:2d}]: ' ' (space)")
+                        else:
+                            print(f"  [{idx:2d}]: '{char}'")
                     
                     try:
                         decision = json.loads(json_str)
+                        print(f"\n✅ Successfully parsed JSON: {decision}")
                         
-                        # Validate decision
-                        required_fields = ['action', 'confidence', 'reason']
-                        valid = all(field in decision for field in required_fields)
-                        
-                        if valid:
-                            print(f"✅ Model made a valid trading decision!")
-                            print(f"🎯 Decision: {decision['action']}")
-                            print(f"🔮 Confidence: {decision['confidence']}")
-                            print(f"💭 Reason: {decision['reason']}")
-                            return True
-                        else:
-                            print(f"⚠️ Decision missing required fields")
-                            print(f"📄 Decision: {json.dumps(decision, indent=2)}")
-                            return False
+                        # Check for field mappings
+                        if 'Decision' in decision:
+                            print(f"📝 Found 'Decision' field (needs mapping to 'action')")
+                        if 'Reasoning' in decision:
+                            print(f"📝 Found 'Reasoning' field (needs mapping to 'reason')")
                             
-                    except json.JSONDecodeError:
-                        print(f"❌ Failed to parse trading decision as JSON")
-                        print(f"📄 Raw response: {content[:500]}...")
-                        return False
+                    except json.JSONDecodeError as e:
+                        print(f"\n❌ JSON Parse Error: {e}")
+                        print(f"❌ Error position: line {e.lineno}, column {e.colno} (char {e.pos})")
+                        
+                        # Try to identify the issue
+                        if e.pos and e.pos < len(json_str):
+                            error_context = json_str[max(0, e.pos-10):e.pos+10]
+                            print(f"❌ Context around error: '{error_context}'")
+                            print(f"❌ Character at error position: '{json_str[e.pos]}' (ASCII: {ord(json_str[e.pos])})")
+                        
+                        # Check for common issues
+                        if '\n' in json_str[:e.pos]:
+                            print("⚠️ Possible issue: Newline in JSON key/value")
+                        if json_str.count('"') % 2 != 0:
+                            print("⚠️ Possible issue: Odd number of quotes")
+                        if 'true' in json_str or 'false' in json_str:
+                            print("⚠️ Note: JSON uses lowercase true/false")
                 else:
-                    print(f"❌ No JSON found in response")
-                    print(f"📄 Raw response: {content[:500]}...")
-                    return False
-        else:
-            print(f"❌ Request failed with status: {response.status_code}")
-            return False
-            
-    except Exception as e:
-        print(f"❌ Error: {e}")
-        return False
+                    print("\n❌ No JSON found in response")
+                    
+            else:
+                print(f"❌ Request failed with status: {response.status_code}")
+                
+        except Exception as e:
+            print(f"❌ Error: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # Small delay between tests
+        time.sleep(2)
 
 
 def main():
-    """Run all tests"""
-    print("🚀 LM Studio Integration Test for Trading Bot")
-    print("=" * 50)
-    
-    # Get URL from command line or use default
+    """Run debug tests"""
     url = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:1234"
     model = sys.argv[2] if len(sys.argv) > 2 else "local-model"
     
-    print(f"📍 URL: {url}")
-    print(f"🤖 Model: {model}")
-    print("=" * 50)
+    print("🔍 JSON Parsing Debug Test for Phi-4")
+    print("=" * 60)
+    print(f"URL: {url}")
+    print(f"Model: {model}")
+    print("=" * 60)
     
-    # Run tests
-    tests_passed = 0
-    total_tests = 3
+    test_trading_decision_debug(url, model)
     
-    if test_lm_studio_connection(url):
-        tests_passed += 1
-    else:
-        print("\n❌ Cannot proceed without LM Studio connection")
-        print("📝 Please:")
-        print("   1. Start LM Studio")
-        print("   2. Load a model")
-        print("   3. Start the server")
-        print("   4. Run this test again")
-        return
-    
-    if test_model_response(url, model):
-        tests_passed += 1
-    
-    if test_trading_decision(url, model):
-        tests_passed += 1
-    
-    # Summary
-    print("\n" + "=" * 50)
-    print(f"📊 Test Summary: {tests_passed}/{total_tests} passed")
-    
-    if tests_passed == total_tests:
-        print("✅ All tests passed! Your LM Studio setup is ready for trading.")
-        print("\n🎯 Next steps:")
-        print("   1. Configure your .env file")
-        print("   2. Run: python main.py")
-    else:
-        print("⚠️ Some tests failed. Please check:")
-        print("   - Model is properly loaded in LM Studio")
-        print("   - Model supports instruction following")
-        print("   - Server settings are correct")
-        print("\n💡 Tip: Try a different model if current one fails JSON formatting")
+    print("\n" + "=" * 60)
+    print("💡 Debug Summary:")
+    print("- Check if JSON has unexpected characters at position 20")
+    print("- Look for newlines or special characters in keys/values")
+    print("- Verify all strings are properly quoted")
+    print("- Ensure no trailing commas or syntax issues")
 
 
 if __name__ == "__main__":

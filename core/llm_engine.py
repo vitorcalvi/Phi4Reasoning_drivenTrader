@@ -275,28 +275,60 @@ class LLMEngine:
                     # Log response length for debugging
                     logger.debug(f"🧠 LM Studio response length: {len(content)} chars")
                     
-                    # Extract JSON from response
-                    # Try to find JSON in the response
-                    json_start = content.find('{')
-                    json_end = content.rfind('}') + 1
+                    # If content has <think> tags, extract after </think>
+                    if '<think>' in content:
+                        if '</think>' in content:
+                            content = content.split('</think>')[-1].strip()
+                        else:
+                            # If no closing tag, look for JSON after the <think> content
+                            # Try to find where JSON might start
+                            json_indicators = ['\n{', '\n\n{', '}\n{', 'Therefore, the output is\n{']
+                            for indicator in json_indicators:
+                                if indicator in content:
+                                    content = content.split(indicator)[-1]
+                                    content = '{' + content  # Add back the opening brace
+                                    break
                     
-                    if json_start != -1 and json_end > json_start:
-                        json_str = content[json_start:json_end]
+                    # Check for incomplete JSON patterns like { ... }
+                    if '...' in content and content.count('{') == 1 and content.count('}') == 1:
+                        logger.warning("⚠️ Detected incomplete JSON with '...' placeholder")
+                        logger.info("📊 Using fallback decision logic due to incomplete LLM response")
+                        return None
+                    
+                    # Extract JSON from response - handle duplicates and nested objects
+                    json_start = content.find('{')
+                    if json_start != -1:
+                        # Find matching closing brace
+                        brace_count = 0
+                        json_end = json_start
+                        for i in range(json_start, len(content)):
+                            if content[i] == '{':
+                                brace_count += 1
+                            elif content[i] == '}':
+                                brace_count -= 1
+                                if brace_count == 0:
+                                    json_end = i + 1
+                                    break
                         
-                        try:
-                            decision = json.loads(json_str)
+                        if json_end > json_start:
+                            json_str = content[json_start:json_end]
                             
-                            # Validate decision
-                            if self._validate_decision(decision):
-                                logger.info(f"🧠 LLM Decision: {decision['action']} - {decision.get('reason', 'No reason')}")
-                                logger.info(f"🔮 Confidence: {decision.get('confidence', 0):.1%}")
-                                return decision
-                            else:
-                                logger.warning("⚠️ Invalid decision format from LLM")
+                            try:
+                                decision = json.loads(json_str)
                                 
-                        except json.JSONDecodeError as e:
-                            logger.error(f"❌ Failed to parse LLM JSON response: {e}")
-                            logger.debug(f"📄 Response content: {json_str[:500]}...")
+                                # Validate decision
+                                if self._validate_decision(decision):
+                                    logger.info(f"🧠 LLM Decision: {decision['action']} - {decision.get('reason', 'No reason')}")
+                                    logger.info(f"🔮 Confidence: {decision.get('confidence', 0):.1%}")
+                                    return decision
+                                else:
+                                    logger.warning("⚠️ Invalid decision format from LLM")
+                                    
+                            except json.JSONDecodeError as e:
+                                logger.error(f"❌ Failed to parse LLM JSON response: {e}")
+                                logger.debug(f"📄 Response content: {json_str[:500]}...")
+                        else:
+                            logger.warning("⚠️ Could not find complete JSON in response")
                     else:
                         logger.warning("⚠️ No JSON found in LLM response")
                         logger.debug(f"📄 Full response: {content[:500]}...")
@@ -345,25 +377,28 @@ class LLMEngine:
         
         # Add JSON emphasis for better LM Studio compatibility
         # Try a simpler prompt format if the model is struggling
-        simple_mode = os.getenv('SIMPLE_PROMPTS', 'False').lower() == 'true'
+        simple_mode = os.getenv('SIMPLE_PROMPTS', 'True').lower() == 'true'  # Default to True
         
         if simple_mode:
             # Simplified prompt for models that struggle with complex formatting
-            prompt = f"""Trading bot needs a decision. Current price: ${market.get('price', 0):.2f}
-
+            # More explicit instructions to avoid incomplete responses
+            prompt = f"""Price: ${market.get('price', 0):.2f}
 RSI: {market.get('indicators', {}).get('rsi', 50):.1f}
-Volume ratio: {market.get('indicators', {}).get('volume_ratio', 1):.1f}
+Volume: {market.get('indicators', {}).get('volume_ratio', 1):.1f}x
 Position: {"None" if not position else position['side']}
 
-Respond with this JSON format only:
+Respond with COMPLETE JSON (no placeholders like ...):
 {{
     "action": "WAIT",
     "confidence": 0.7,
-    "reason": "Your reason here",
-    "position_size": 10
+    "reason": "waiting for signal"
 }}
 
-Action must be: LONG, SHORT, CLOSE, or WAIT"""
+Rules:
+- action must be: LONG, SHORT, CLOSE, or WAIT
+- confidence: number between 0 and 1
+- reason: brief explanation
+- Output complete JSON only, no ... or placeholders"""
         else:
             # Full detailed prompt
             prompt = f"""
@@ -428,10 +463,18 @@ REMEMBER: Output ONLY the JSON object, nothing else!
             # Check for common variations
             if 'decision' in decision:
                 decision['action'] = decision['decision']
+            elif 'Decision' in decision:
+                decision['action'] = decision['Decision']
             elif 'trade' in decision:
                 decision['action'] = decision['trade']
             elif 'signal' in decision:
                 decision['action'] = decision['signal']
+        
+        # Convert BUY/SELL to LONG/SHORT
+        if decision.get('action') == 'BUY':
+            decision['action'] = 'LONG'
+        elif decision.get('action') == 'SELL':
+            decision['action'] = 'SHORT'
         
         # Ensure confidence exists
         if 'confidence' not in decision:
@@ -450,6 +493,8 @@ REMEMBER: Output ONLY the JSON object, nothing else!
         if 'reason' not in decision:
             if 'reasoning' in decision:
                 decision['reason'] = decision['reasoning']
+            elif 'Reasoning' in decision:
+                decision['reason'] = decision['Reasoning']
             elif 'explanation' in decision:
                 decision['reason'] = decision['explanation']
             elif 'rationale' in decision:
