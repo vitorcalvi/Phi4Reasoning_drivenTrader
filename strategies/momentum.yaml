@@ -1,0 +1,182 @@
+# Momentum Trading Strategy Configuration
+name: 'Momentum Breakout'
+version: '1.0'
+description: 'Trades strong momentum moves with trend confirmation'
+author: 'LLM Trading Bot'
+
+# Timeframe settings
+timeframe:
+  primary: '5m'
+  analysis: ['1m', '5m', '15m', '1h'] # Multi-timeframe confirmation
+
+# Entry conditions
+entry:
+  long:
+    conditions:
+      # Price action
+      - indicator: 'price'
+        operator: '>'
+        value: 'sma_20'
+        weight: 0.2
+
+      # Momentum indicators
+      - indicator: 'rsi'
+        timeframe: '5m'
+        operator: '>'
+        value: 55
+        weight: 0.15
+
+      - indicator: 'rsi'
+        timeframe: '15m'
+        operator: '>'
+        value: 50
+        weight: 0.1
+
+      # MACD confirmation
+      - indicator: 'macd_histogram'
+        timeframe: '5m'
+        operator: '>'
+        value: 0
+        weight: 0.15
+
+      - indicator: 'macd'
+        timeframe: '5m'
+        operator: '>'
+        value: 'macd_signal'
+        weight: 0.15
+
+      # Volume confirmation
+      - indicator: 'volume_ratio'
+        timeframe: '5m'
+        operator: '>'
+        value: 1.2
+        weight: 0.15
+
+      # Market structure
+      - indicator: 'price'
+        operator: 'breaks_above'
+        value: 'resistance'
+        lookback: 20
+        weight: 0.1
+
+    min_confidence: 0.75
+
+    filters:
+      - name: 'trend_filter'
+        require_uptrend: true
+        timeframes: ['15m', '1h']
+      - name: 'volatility_filter'
+        min_atr_pct: 0.5
+        max_atr_pct: 5.0
+      - name: 'volume_filter'
+        min_avg_volume: 1000000 # USD
+
+  short:
+    conditions:
+      # Price action
+      - indicator: 'price'
+        operator: '<'
+        value: 'sma_20'
+        weight: 0.2
+
+      # Momentum indicators
+      - indicator: 'rsi'
+        timeframe: '5m'
+        operator: '<'
+        value: 45
+        weight: 0.15
+
+      - indicator: 'rsi'
+        timeframe: '15m'
+        operator: '<'
+        value: 50
+        weight: 0.1
+
+      # MACD confirmation
+      - indicator: 'macd_histogram'
+        timeframe: '5m'
+        operator: '<'
+        value: 0
+        weight: 0.15
+
+      - indicator: 'macd'
+        timeframe: '5m'
+        operator: '<'
+        value: 'macd_signal'
+        weight: 0.15
+
+      # Volume confirmation
+      - indicator: 'volume_ratio'
+        timeframe: '5m'
+        operator: '>'
+        value: 1.2
+        weight: 0.15
+
+      # Market structure
+      - indicator: 'price'
+        operator: 'breaks_below'
+        value: 'support'
+        lookback: 20
+        weight: 0.1
+
+    min_confidence: 0.75
+
+    filters:
+      - name: 'trend_filter'
+        require_downtrend: true
+        timeframes: ['15m', '1h']
+
+# Exit conditions
+exit:
+  # Take profit settings
+  take_profit:
+    type: 'atr_multiple'
+    value: 2.0 # 2x ATR
+
+  # Stop loss settings
+  stop_loss:
+    type: 'atr_multiple'
+    value: 1.0 # 1x ATR
+
+  # Trailing stop
+  trailing_stop:
+    enabled: true
+    activation_profit: 1.0 # Activate after 1% profit
+    trail_type: 'atr'
+    trail_value: 0.5 # Trail by 0.5x ATR
+
+  # Time-based exit
+  time_stop:
+    enabled: true
+    max_duration: 1440 # 24 minutes
+
+  # Dynamic exit conditions
+  dynamic_exits:
+    - name: 'momentum_exhaustion'
+      conditions:
+        - indicator: 'rsi'
+          operator: '>'
+          value: 80 # For longs
+          position_side: 'long'
+
+        - indicator: 'rsi'
+          operator: '<'
+          value: 20 # For shorts
+          position_side: 'short'
+
+    - name: 'trend_reversal'
+      conditions:
+        - indicator: 'ema_9'
+          operator: 'crosses_below'
+          value: 'ema_21'
+          position_side: 'long'
+
+        - indicator: 'ema_9'
+          operator: 'crosses_above'
+          value: 'ema_21'
+          position_side: 'short'
+
+# Position sizing
+position_sizing:
+  method: 'volatility_adjusted'
+  base_size: ''
