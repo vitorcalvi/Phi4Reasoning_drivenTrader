@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-LLM-Driven Trading Bot
-Main entry point and orchestrator
+AI-Driven Trading Bot - Main Entry Point
 """
 import asyncio
 import signal
@@ -30,18 +29,18 @@ class TradingBot:
         self.llm_engine = LLMEngine(self.config)
         self.risk_manager = RiskManager(self.config)
         
-        # Setup signal handlers
+        # Signal handlers
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
     
     def _signal_handler(self, signum, frame):
-        """Handle shutdown signals"""
+        """Handle shutdown"""
         logger.info("🛑 Shutdown signal received")
         self.running = False
     
     async def initialize(self):
         """Initialize all components"""
-        logger.info("🚀 Initializing LLM-Driven Trading Bot")
+        logger.info("🚀 Initializing AI-Driven Trading Bot")
         
         # Test connections
         if not await self.bot_engine.test_connection():
@@ -56,20 +55,20 @@ class TradingBot:
         strategies = await self.llm_engine.load_strategies()
         logger.info(f"📚 Loaded {len(strategies)} strategies")
         
-        # Initialize risk parameters
+        # Initialize risk manager
         self.risk_manager.initialize()
         
-        logger.info("✅ All systems initialized successfully")
+        logger.info("✅ All systems ready")
         return True
     
     async def run(self):
         """Main trading loop"""
         self.running = True
-        logger.info("🔄 Starting main trading loop")
+        logger.info("🔄 Starting AI trading loop")
         
         while self.running:
             try:
-                # 1. Get current market state
+                # 1. Get market data
                 market_data = await self.bot_engine.get_market_data()
                 if not market_data:
                     await asyncio.sleep(5)
@@ -78,17 +77,17 @@ class TradingBot:
                 # 2. Get current position
                 position = await self.bot_engine.get_current_position()
                 
-                # 3. Get performance metrics
+                # 3. Get performance
                 performance = await self.bot_engine.get_performance_metrics()
                 
-                # 4. Let LLM analyze and decide
+                # 4. AI decision
                 decision = await self.llm_engine.make_decision(
                     market_data=market_data,
                     position=position,
                     performance=performance
                 )
                 
-                # 5. Validate decision with risk manager
+                # 5. Risk validation
                 validated_decision = await self.risk_manager.validate_decision(
                     decision=decision,
                     market_data=market_data,
@@ -96,35 +95,36 @@ class TradingBot:
                     performance=performance
                 )
                 
-                # 6. Execute decision
+                # 6. Execute
                 if validated_decision['action'] != 'WAIT':
                     await self.bot_engine.execute_decision(validated_decision)
                 
-                # 7. Log status
+                # 7. Status
                 await self._log_status(market_data, position, validated_decision)
                 
-                # 8. Sleep based on timeframe
+                # 8. Sleep
                 await asyncio.sleep(self.config.LOOP_INTERVAL)
                 
             except Exception as e:
-                logger.error(f"❌ Error in main loop: {e}")
+                logger.error(f"❌ Loop error: {e}")
                 await asyncio.sleep(10)
     
     async def _log_status(self, market_data, position, decision):
-        """Log current status"""
-        status = f"💹 {self.config.SYMBOL}: ${market_data['price']:.2f}"
+        """Log status"""
+        price = market_data.get('price', 0)
+        status = f"💹 {self.config.SYMBOL}: ${price:.4f}"
         
         if position:
             pnl = position.get('unrealized_pnl', 0)
             pnl_pct = position.get('pnl_percent', 0)
-            status += f" | Position: {position['side']} | PnL: ${pnl:.2f} ({pnl_pct:.2f}%)"
+            status += f" | {position['side']} | PnL: ${pnl:.2f} ({pnl_pct:.1f}%)"
         else:
             status += " | No position"
         
-        status += f" | Decision: {decision['action']}"
+        status += f" | {decision['action']}"
         
         if decision.get('confidence'):
-            status += f" ({decision['confidence']:.0%} confidence)"
+            status += f" ({decision['confidence']:.0%})"
         
         logger.info(status)
     
@@ -132,32 +132,32 @@ class TradingBot:
         """Cleanup on shutdown"""
         logger.info("🧹 Cleaning up...")
         
-        # Close any open positions
+        # Close position
         position = await self.bot_engine.get_current_position()
         if position:
-            logger.info("📊 Closing open position before shutdown")
+            logger.info("📊 Closing position")
             await self.bot_engine.close_position("Bot Shutdown")
         
-        # Save performance data
+        # Save data
         await self.bot_engine.save_performance_data()
         
         logger.info("✅ Cleanup complete")
 
 
 async def main():
-    """Main entry point"""
+    """Main entry"""
     bot = TradingBot()
     
     # Initialize
     if not await bot.initialize():
-        logger.error("Failed to initialize bot")
+        logger.error("Failed to initialize")
         return 1
     
     try:
-        # Run main loop
+        # Run
         await bot.run()
     except Exception as e:
-        logger.error(f"❌ Unexpected error: {e}")
+        logger.error(f"❌ Error: {e}")
         return 1
     finally:
         # Cleanup

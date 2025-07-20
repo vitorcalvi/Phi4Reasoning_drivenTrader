@@ -1,257 +1,35 @@
-# 1-Minute Scalping Strategy Configuration
+# 1-Minute Scalping Strategy
 name: '1-Minute Scalping'
 version: '1.0'
-description: 'High-frequency scalping strategy for 1-minute timeframe'
-author: 'LLM Trading Bot'
-
-# Timeframe settings
-timeframe:
-  primary: '1m'
-  analysis: ['1m', '5m', '15m'] # Multi-timeframe analysis
+description: 'AI-driven scalping for quick profits'
+author: 'AI Trading Bot'
 
 # Entry conditions
 entry:
   long:
-    conditions:
-      - indicator: 'rsi'
-        timeframe: '1m'
-        operator: '<'
-        value: 35
-        weight: 0.3
-
-      - indicator: 'volume_ratio'
-        timeframe: '1m'
-        operator: '>'
-        value: 1.5
-        weight: 0.2
-
-      - indicator: 'orderbook_imbalance'
-        operator: '>'
-        value: 0.1
-        weight: 0.2
-
-      - indicator: 'macd_histogram'
-        timeframe: '1m'
-        operator: '>'
-        value: 0
-        weight: 0.15
-
-      - indicator: 'bb_position'
-        timeframe: '1m'
-        operator: '<'
-        value: 0.2
-        weight: 0.15
-
-    # Minimum confidence required to enter
-    min_confidence: 0.7
-
-    # Additional filters
-    filters:
-      - name: 'spread_filter'
-        max_spread_pct: 0.05
-      - name: 'volatility_filter'
-        min_atr_pct: 0.1
-        max_atr_pct: 3.0
-      - name: 'trend_alignment'
-        require_trend: false # Scalping doesn't require trend
+    rsi_oversold: 30
+    volume_multiplier: 1.5
+    spread_limit: 0.05
+    confidence_threshold: 0.7
 
   short:
-    conditions:
-      - indicator: 'rsi'
-        timeframe: '1m'
-        operator: '>'
-        value: 65
-        weight: 0.3
-
-      - indicator: 'volume_ratio'
-        timeframe: '1m'
-        operator: '>'
-        value: 1.5
-        weight: 0.2
-
-      - indicator: 'orderbook_imbalance'
-        operator: '<'
-        value: -0.1
-        weight: 0.2
-
-      - indicator: 'macd_histogram'
-        timeframe: '1m'
-        operator: '<'
-        value: 0
-        weight: 0.15
-
-      - indicator: 'bb_position'
-        timeframe: '1m'
-        operator: '>'
-        value: 0.8
-        weight: 0.15
-
-    min_confidence: 0.7
-
-    filters:
-      - name: 'spread_filter'
-        max_spread_pct: 0.05
-      - name: 'volatility_filter'
-        min_atr_pct: 0.1
-        max_atr_pct: 3.0
+    rsi_overbought: 70
+    volume_multiplier: 1.5
+    spread_limit: 0.05
+    confidence_threshold: 0.7
 
 # Exit conditions
 exit:
-  # Take profit settings
-  take_profit:
-    type: 'percentage' # or "atr_multiple" or "fixed"
-    value: 0.5 # 0.5% for scalping
-
-  # Stop loss settings
-  stop_loss:
-    type: 'percentage'
-    value: 0.3 # 0.3% stop loss
-
-  # Trailing stop
-  trailing_stop:
-    enabled: true
-    activation_profit: 0.3 # Activate after 0.3% profit
-    trail_distance: 0.1 # Trail by 0.1%
-
-  # Time-based exit
-  time_stop:
-    enabled: true
-    max_duration: 120 # 2 minutes max hold time
-
-  # Dynamic exit conditions
-  dynamic_exits:
-    - name: 'momentum_reversal'
-      conditions:
-        - indicator: 'rsi'
-          operator: 'crosses'
-          value: 50
-          direction: 'opposite' # Opposite to entry
-
-    - name: 'volume_dry_up'
-      conditions:
-        - indicator: 'volume_ratio'
-          operator: '<'
-          value: 0.5
-          duration: 3 # Last 3 candles
+  take_profit_pct: 1.0
+  stop_loss_pct: 0.5
+  max_duration_minutes: 30
 
 # Position sizing
 position_sizing:
-  method: 'fixed_percentage' # or "kelly", "volatility_adjusted"
-  base_size: 10 # Base size in USDT
-
-  # Size adjustments
-  adjustments:
-    - factor: 'confidence'
-      min_multiplier: 0.5
-      max_multiplier: 1.5
-
-    - factor: 'volatility'
-      high_vol_reduction: 0.5 # Reduce size by 50% in high volatility
-
-    - factor: 'consecutive_losses'
-      reduction_per_loss: 0.2 # Reduce 20% per consecutive loss
-      min_multiplier: 0.3
-
-    - factor: 'time_of_day'
-      peak_hours: [9, 10, 11, 14, 15, 16] # Market hours
-      peak_multiplier: 1.2
-      off_peak_multiplier: 0.8
+  base_size: 10
+  max_size: 100
 
 # Risk management
 risk_management:
-  max_position_size: 100 # Maximum USDT per position
-  max_open_positions: 1 # Only 1 position at a time for scalping
-
-  # Daily limits
-  daily_limits:
-    max_trades: 20
-    max_loss: 50 # USDT
-    max_consecutive_losses: 3
-
-  # Risk per trade
-  risk_per_trade:
-    type: 'percentage'
-    value: 1 # 1% of account
-
-  # Correlation limits
-  correlation_limits:
-    enabled: false # Not needed for single pair
-
-# Market conditions
-market_conditions:
-  # Favorable conditions for this strategy
-  favorable:
-    - volatility: 'medium'
-    - trend: 'any' # Scalping works in any trend
-    - volume: 'high'
-    - time_zones: ['London', 'NewYork'] # Active sessions
-
-  # Avoid these conditions
-  avoid:
-    - volatility: 'extreme'
-    - volume: 'very_low'
-    - events: ['major_news', 'fed_announcement']
-    - time_zones: ['Asian_late'] # Low liquidity
-
-# Performance targets
-performance_targets:
-  daily_profit_target: 20 # USDT
-  win_rate_target: 0.6 # 60%
-  profit_factor_target: 1.5
-  max_drawdown: 10 # Percentage
-
-# Strategy parameters optimization hints
-optimization:
-  # Parameters that LLM can adjust based on performance
-  adjustable_parameters:
-    - name: 'rsi_oversold'
-      range: [25, 40]
-      step: 5
-
-    - name: 'rsi_overbought'
-      range: [60, 75]
-      step: 5
-
-    - name: 'volume_multiplier'
-      range: [1.2, 2.5]
-      step: 0.1
-
-    - name: 'take_profit_pct'
-      range: [0.3, 1.0]
-      step: 0.1
-
-    - name: 'stop_loss_pct'
-      range: [0.2, 0.5]
-      step: 0.05
-
-  # Optimization triggers
-  triggers:
-    - condition: 'win_rate < 0.4'
-      action: 'tighten_entry_conditions'
-
-    - condition: 'avg_trade_duration > 5'
-      action: 'reduce_take_profit'
-
-    - condition: 'consecutive_losses > 2'
-      action: 'increase_confidence_threshold'
-
-# LLM decision hints
-llm_hints:
-  decision_factors:
-    - 'Consider spread cost impact on small profit targets'
-    - 'Volume spikes often indicate institutional activity'
-    - 'Orderbook imbalance shows immediate direction bias'
-    - 'Avoid trading during news events'
-    - 'Quick exits are crucial for scalping success'
-
-  risk_considerations:
-    - 'Never chase price after missing entry'
-    - 'Cut losses quickly if momentum reverses'
-    - 'Reduce size during high volatility periods'
-    - 'Stop trading after 3 consecutive losses'
-
-  optimization_guidance:
-    - 'Adjust RSI levels based on recent market conditions'
-    - 'Increase volume requirements in choppy markets'
-    - 'Tighten profit targets during low volatility'
-    - 'Consider time of day for position sizing'
+  max_daily_trades: 20
+  max_consecutive_losses: 3
