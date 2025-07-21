@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Streamlined Phi-4 implementation using explicit if-then rules
+Streamlined Phi-4 implementation using explicit if-then rules with improved prompting
 """
 import requests
 import re
@@ -19,17 +19,56 @@ class Phi4ExplicitRules:
         """
         rsi_int = int(rsi)
         
-        # Improved prompt: Force concise response with no explanations
-        prompt = f"""Rules:
-1. If RSI below 30: LONG
-2. If RSI above 70: SHORT  
-3. If RSI between 30-70: WAIT
+        # First try LLM with improved prompt, retry once if fails
+        llm_result = self._try_llm_signal(rsi_int)
+        if llm_result:
+            return llm_result
+        
+        llm_result = self._try_llm_signal(rsi_int, retry=True)  # Retry with alternative prompt
+        if llm_result:
+            return llm_result
+        
+        # Fallback to deterministic rules if LLM fails
+        print(f"DEBUG: LLM failed for RSI {rsi_int}, using fallback rules")
+        return self._get_deterministic_signal(rsi_int)
+    
+    def _try_llm_signal(self, rsi_int: int, retry: bool = False) -> Optional[str]:
+        """Try to get signal from LLM with few-shot prompting"""
+        if retry:
+            # Alternative prompt for retry: More explicit with boundaries
+            prompt = f"""You are a trading bot following exact RSI rules. Respond with ONLY the action word.
 
-RSI = {rsi_int}
+Rules (strict boundaries):
+- If RSI strictly less than 30 (RSI < 30): LONG
+- If RSI strictly greater than 70 (RSI > 70): SHORT
+- Otherwise (RSI >= 30 and RSI <= 70): WAIT
 
-Respond ONLY with the action: LONG, SHORT, or WAIT. No explanations or additional text.
+Examples:
+RSI: 29 → LONG
+RSI: 30 → WAIT
+RSI: 70 → WAIT
+RSI: 71 → SHORT
 
-Answer:"""
+Current RSI: {rsi_int}
+
+Your answer (one word only):"""
+        else:
+            # Primary prompt with few-shot examples
+            prompt = f"""You are a trading bot. Follow these RSI rules exactly and respond with ONLY the action: LONG, SHORT, or WAIT. No explanations, no thinking tags, no extra text.
+
+Rules:
+- RSI < 30: LONG
+- RSI > 70: SHORT  
+- RSI >= 30 and <= 70: WAIT
+
+Examples:
+Input: RSI 25 → LONG
+Input: RSI 75 → SHORT
+Input: RSI 50 → WAIT
+Input: RSI 30 → WAIT
+Input: RSI 70 → WAIT
+
+Input: RSI {rsi_int} →"""
         
         try:
             response = requests.post(
@@ -38,43 +77,56 @@ Answer:"""
                     "model": self.model,
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0.0,
-                    "max_tokens": 100  # Increased to avoid truncation
+                    "max_tokens": 200  # Increased to allow for completion
                 },
                 timeout=10
             )
             
             if response.status_code == 200:
                 content = response.json()['choices'][0]['message']['content']
-                print(f"DEBUG: Raw LLM response for RSI {rsi_int}: {content}")  # Added for debugging
-                return self._extract_action(content)
+                print(f"DEBUG: Raw LLM response for RSI {rsi_int} (retry={retry}): {content}")
+                action = self._extract_action(content)
+                if action:
+                    return action
+                else:
+                    print(f"DEBUG: Extraction failed on {'retry' if retry else 'first try'}")
             
         except Exception as e:
             print(f"LLM error: {e}")
         
         return None
     
+    def _get_deterministic_signal(self, rsi: int) -> str:
+        """Fallback deterministic rules - always works"""
+        if rsi < 30:
+            return "LONG"
+        elif rsi > 70:
+            return "SHORT"
+        else:
+            return "WAIT"
+    
     def _extract_action(self, content: str) -> Optional[str]:
-        """Extract trading action from response"""
-        # Clean content: Remove <think> blocks and common wrappers
+        """Extract trading action from response - robust logic"""
+        # Clean content thoroughly
         content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
-        content = re.sub(r'<\w+>.*?</\w+>', '', content, flags=re.DOTALL)  # Remove other potential tags
-        content = content.replace('\\boxed{', '').replace('}', '').replace('"', '').strip().upper()
+        content = re.sub(r'<[^>]+>.*?</[^>]+>', '', content, flags=re.DOTALL)
+        content = content.replace('\\boxed{', '').replace('}', '').replace('"', '').replace('→', '').strip()
         
-        # Improved extraction: Look for patterns like "LONG" or "The action is LONG"
-        match = re.search(r'\b(LONG|SHORT|WAIT)\b', content)
+        # Normalize to upper case
+        content_upper = content.upper()
+        
+        # Look for exact standalone action
+        match = re.match(r'^(LONG|SHORT|WAIT)$', content_upper.strip())
         if match:
             return match.group(1)
         
-        # Fallback: If no exact match, check for substrings (less reliable, but helpful for verbose models)
-        content_lower = content.lower()
-        if 'long' in content_lower:
-            return 'LONG'
-        elif 'short' in content_lower:
-            return 'SHORT'
-        elif 'wait' in content_lower:
-            return 'WAIT'
+        # Look for pattern like "LONG" anywhere, but prioritize the first clear one
+        actions = re.findall(r'\b(LONG|SHORT|WAIT)\b', content_upper)
+        if actions:
+            # Return the last one, as it might be the final answer
+            return actions[-1]
         
-        print(f"DEBUG: No action extracted from: {content}")  # Added for debugging
+        print(f"DEBUG: No action extracted from: {content}")
         return None
     
     def test_rules(self):
@@ -85,22 +137,46 @@ Answer:"""
             (50, "WAIT"),   # Between 30-70
             (30, "WAIT"),   # Boundary
             (70, "WAIT"),   # Boundary
-            (29, "LONG"),   # Additional: Just below 30
-            (71, "SHORT"),  # Additional: Just above 70
+            (29, "LONG"),   # Just below 30
+            (71, "SHORT"),  # Just above 70
+            (15, "LONG"),   # Well below 30
+            (85, "SHORT"),  # Well above 70
+            (45, "WAIT"),   # Middle range
         ]
         
         print("Testing Explicit Rules:")
-        print("-" * 40)
+        print("-" * 50)
+        
+        correct = 0
+        total = len(test_cases)
         
         for rsi, expected in test_cases:
             result = self.get_trading_signal(rsi)
             result_str = result if result else "NONE"
             status = "✅" if result == expected else "❌"
-            print(f"RSI {rsi:2d}: {result_str:5s} (expected {expected}) {status}")
+            if result == expected:
+                correct += 1
+            print(f"RSI {rsi:2d}: {result_str:5s} (expected {expected:5s}) {status}")
+        
+        print("-" * 50)
+        print(f"Accuracy: {correct}/{total} ({100*correct/total:.1f}%)")
+
+
+# Alternative: Pure deterministic version (no LLM)
+class DeterministicRules:
+    def get_trading_signal(self, rsi: float) -> str:
+        """Pure rule-based signal - no LLM dependency"""
+        rsi_int = int(rsi)
+        if rsi_int < 30:
+            return "LONG"
+        elif rsi_int > 70:
+            return "SHORT"
+        else:
+            return "WAIT"
 
 
 # Drop-in replacement for existing LLM decision method
-def _try_llm_decision(context: Dict, llm_url: str, llm_model: str) -> Optional[Dict]:
+def _try_llm_decision(context: Dict, llm_url: str, llm_model: str, use_deterministic_fallback: bool = True) -> Optional[Dict]:
     """
     Phi-4 compatible decision using explicit rules
     Drop-in replacement for existing LLM methods
@@ -113,14 +189,21 @@ def _try_llm_decision(context: Dict, llm_url: str, llm_model: str) -> Optional[D
     if position:
         return None
     
-    phi4 = Phi4ExplicitRules(llm_url, llm_model)
+    if use_deterministic_fallback:
+        # Use hybrid approach (LLM with fallback)
+        phi4 = Phi4ExplicitRules(llm_url, llm_model)
+    else:
+        # Use pure deterministic rules (no LLM)
+        phi4 = DeterministicRules()
+    
     action = phi4.get_trading_signal(rsi)
     
     if action and action in ['LONG', 'SHORT']:
+        method = "LLM+fallback" if use_deterministic_fallback else "deterministic"
         return {
             "action": action,
             "confidence": 0.6,
-            "reason": f"LLM explicit rules (RSI={int(rsi)})"
+            "reason": f"{method} rules (RSI={int(rsi)})"
         }
     
     return None
@@ -128,5 +211,17 @@ def _try_llm_decision(context: Dict, llm_url: str, llm_model: str) -> Optional[D
 
 # Test the implementation
 if __name__ == "__main__":
-    phi4 = Phi4ExplicitRules()
-    phi4.test_rules()
+    print("=== Testing Hybrid LLM + Fallback ===")
+    phi4_hybrid = Phi4ExplicitRules()
+    phi4_hybrid.test_rules()
+    
+    print("\n=== Testing Pure Deterministic ===")
+    phi4_deterministic = DeterministicRules()
+    test_cases = [(25, "LONG"), (75, "SHORT"), (50, "WAIT"), (30, "WAIT"), (70, "WAIT")]
+    
+    print("Testing Pure Deterministic Rules:")
+    print("-" * 50)
+    for rsi, expected in test_cases:
+        result = phi4_deterministic.get_trading_signal(rsi)
+        status = "✅" if result == expected else "❌"
+        print(f"RSI {rsi:2d}: {result:5s} (expected {expected:5s}) {status}")
