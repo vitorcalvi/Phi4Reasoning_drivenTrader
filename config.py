@@ -1,5 +1,5 @@
 """
-Configuration for AI-Driven Trading Bot
+Configuration for True AI Autonomous Trading Bot
 """
 import os
 from dotenv import load_dotenv
@@ -19,10 +19,11 @@ class Config:
     DEFAULT_POSITION_SIZE = float(os.getenv('DEFAULT_POSITION_SIZE', '10'))
     MIN_POSITION_SIZE = float(os.getenv('MIN_POSITION_SIZE', '5'))
     
-    # LLM
+    # AI Configuration
     LLM_URL = os.getenv('LLM_URL', 'http://localhost:1234')
     LLM_MODEL = os.getenv('LLM_MODEL', 'local-model')
-    SIMPLE_PROMPTS = os.getenv('SIMPLE_PROMPTS', 'True').lower() == 'true'
+    AI_TEMPERATURE = float(os.getenv('AI_TEMPERATURE', '0.3'))
+    AI_MAX_TOKENS = int(os.getenv('AI_MAX_TOKENS', '200'))
     
     # Risk
     MAX_POSITION_SIZE = float(os.getenv('MAX_POSITION_SIZE', '100'))
@@ -44,11 +45,13 @@ class Config:
     @classmethod
     def display(cls):
         """Display config"""
-        print("🔧 Configuration:")
+        print("🔧 AI Autonomous Configuration:")
         print(f"  Exchange: {'Testnet' if cls.TESTNET else 'Mainnet'}")
         print(f"  Symbol: {cls.SYMBOL}")
         print(f"  Timeframe: {cls.TIMEFRAME}m")
-        print(f"  LLM: {cls.LLM_MODEL} @ {cls.LLM_URL}")
+        print(f"  AI Engine: {cls.LLM_MODEL} @ {cls.LLM_URL}")
+        print(f"  AI Temperature: {cls.AI_TEMPERATURE}")
+        print(f"  Position Size: ${cls.DEFAULT_POSITION_SIZE} - ${cls.MAX_POSITION_SIZE}")
 
 
 if __name__ == "__main__":

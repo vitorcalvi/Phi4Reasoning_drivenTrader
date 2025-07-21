@@ -1,5 +1,5 @@
 """
-Bot Engine - Handles market data and trade execution
+Bot Engine with AI Learning Integration
 """
 import asyncio
 import json
@@ -25,6 +25,9 @@ class BotEngine:
         
         self.current_position = None
         self.trade_history = []
+        self.entry_decision = None  # Store entry decision for learning
+        self.llm_engine = None  # Will be set by main
+        
         self.performance_data = {
             'total_trades': 0,
             'winning_trades': 0,
@@ -33,6 +36,10 @@ class BotEngine:
             'start_balance': 0,
             'current_balance': 0
         }
+    
+    def set_llm_engine(self, llm_engine):
+        """Set reference to LLM engine for learning feedback"""
+        self.llm_engine = llm_engine
     
     async def test_connection(self) -> bool:
         """Test exchange connection"""
@@ -48,10 +55,6 @@ class BotEngine:
             logger.error(f"❌ Connection failed: {e}")
         return False
     
-
-# Fixed get_market_data method for core/bot_engine.py
-# Replace the get_market_data method in your bot_engine.py with this:
-
     async def get_market_data(self) -> Dict:
         """Get market data with indicators"""
         try:
@@ -159,6 +162,10 @@ class BotEngine:
                 },
                 'orderbook': {
                     'spread_pct': spread_pct
+                },
+                'raw_data': {
+                    'close_prices': close[-20:].tolist(),
+                    'volumes': volume[-20:].tolist()
                 }
             }
             
@@ -234,7 +241,7 @@ class BotEngine:
             await self.close_position(decision.get('reason', 'AI Decision'))
     
     async def _open_position(self, side: str, decision: Dict):
-        """Open position"""
+        """Open position and store decision for learning"""
         try:
             market_data = await self.get_market_data()
             if not market_data:
@@ -268,7 +275,12 @@ class BotEngine:
                     'take_profit': decision.get('take_profit', price * (1.01 if side == 'LONG' else 0.99)),
                     'entry_reason': decision.get('reason', 'AI Signal')
                 }
+                
+                # Store entry decision for learning
+                self.entry_decision = decision
+                
                 logger.info(f"📈 Opened {side}: {quantity} @ ${price:.4f}")
+                logger.info(f"🎯 AI Confidence: {decision.get('confidence', 0):.0%}")
             else:
                 logger.error(f"❌ Order failed: {response.get('retMsg')}")
                 
@@ -276,7 +288,7 @@ class BotEngine:
             logger.error(f"❌ Open position error: {e}")
     
     async def close_position(self, reason: str):
-        """Close position"""
+        """Close position and feed outcome back to AI"""
         if not self.current_position:
             return
         
@@ -330,9 +342,15 @@ class BotEngine:
                     self.performance_data['winning_trades'] += 1
                 self.performance_data['total_pnl'] += pnl
                 
+                # Feed outcome back to AI for learning
+                if self.llm_engine and self.entry_decision:
+                    self.llm_engine.record_trade_outcome(self.entry_decision, price, pnl)
+                
                 logger.info(f"💰 Closed {self.current_position['side']}: ${pnl:.2f} ({pnl_pct:.1f}%) - {reason}")
+                logger.info(f"🧠 AI Learning: Pattern recorded")
                 
                 self.current_position = None
+                self.entry_decision = None
             else:
                 logger.error(f"❌ Close failed: {response.get('retMsg')}")
                 
@@ -399,9 +417,9 @@ class BotEngine:
         return f"{qty:.{decimals}f}"
     
     async def save_performance_data(self):
-        """Save performance data"""
+        """Save performance data and AI patterns"""
         try:
-            filename = f"performance_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            filename = f"ai_performance_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
             
             data = {
                 'performance': self.performance_data,
@@ -412,6 +430,10 @@ class BotEngine:
             
             with open(filename, 'w') as f:
                 json.dump(data, f, indent=2)
+            
+            # Save AI patterns
+            if self.llm_engine:
+                self.llm_engine.save_patterns()
             
             logger.info(f"💾 Saved to {filename}")
             
