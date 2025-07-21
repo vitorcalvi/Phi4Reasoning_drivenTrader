@@ -1,0 +1,13 @@
+{
+  "performance": {
+    "total_trades": 0,
+    "winning_trades": 0,
+    "total_pnl": 0,
+    "max_drawdown": 0,
+    "start_balance": 0.0,
+    "current_balance": 0.0
+  },
+  "trades": [],
+  "final_balance": 0.0,
+  "timestamp": "2025-07-21T09:59:37.882785"
+}

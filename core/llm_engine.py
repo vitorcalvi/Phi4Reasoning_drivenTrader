@@ -21,8 +21,17 @@ class LLMEngine:
         self.trade_outcomes = []
         self.pattern_memory = {}
         
+        # Detect problematic models
+        self.is_phi4 = 'phi' in self.llm_model.lower()
+        if self.is_phi4:
+            logger.info("⚠️  Phi-4 detected - using pattern-based decisions only")
+        
     async def test_connection(self) -> bool:
         """Test LLM connection"""
+        if self.is_phi4:
+            logger.info("✅ AI Engine ready (Phi-4 mode - pattern-based decisions)")
+            return True
+            
         try:
             response = requests.post(
                 self.llm_url,
@@ -49,7 +58,7 @@ class LLMEngine:
         context = self._build_context(market_data, position, performance)
         
         # Get AI decision
-        decision = await self._get_ai_decision(context)
+        decision = self._get_ai_decision(context)
         
         # Record for learning
         self._record_decision(decision, context)
@@ -90,7 +99,7 @@ class LLMEngine:
         
         return context
     
-    async def _get_ai_decision(self, context: Dict) -> Dict:
+    def _get_ai_decision(self, context: Dict) -> Dict:
         """Get decision from AI"""
         
         # Simplified prompt for Phi-4
@@ -349,23 +358,32 @@ Output exactly: {{"action": "LONG or SHORT or WAIT", "confidence": 0.0-1.0, "rea
         
         self.trade_outcomes.append(outcome)
         
-        # Update pattern memory
-        pattern_key = f"{entry_decision['context']['market_state']}_{entry_decision['context']['rsi']//10}"
-        
-        if pattern_key not in self.pattern_memory:
-            self.pattern_memory[pattern_key] = {
-                'market_state': entry_decision['context']['market_state'],
-                'outcomes': [],
-                'confidence': 0.5
-            }
-        
-        self.pattern_memory[pattern_key]['outcomes'].append(pnl)
-        
-        # Update confidence based on outcomes
-        outcomes = self.pattern_memory[pattern_key]['outcomes']
-        success_rate = sum(1 for o in outcomes if o > 0) / len(outcomes)
-        self.pattern_memory[pattern_key]['confidence'] = success_rate
-        self.pattern_memory[pattern_key]['outcome'] = sum(outcomes) / len(outcomes)
+        # Update pattern memory if context exists
+        if hasattr(self, 'decision_history') and self.decision_history:
+            # Find the decision record that matches this trade
+            for record in reversed(self.decision_history):
+                if record['decision'] == entry_decision:
+                    context = record.get('context', {})
+                    market_state = context.get('market_state', 'neutral')
+                    rsi = context.get('rsi', 50)
+                    
+                    pattern_key = f"{market_state}_{int(rsi)//10}"
+                    
+                    if pattern_key not in self.pattern_memory:
+                        self.pattern_memory[pattern_key] = {
+                            'market_state': market_state,
+                            'outcomes': [],
+                            'confidence': 0.5
+                        }
+                    
+                    self.pattern_memory[pattern_key]['outcomes'].append(pnl)
+                    
+                    # Update confidence based on outcomes
+                    outcomes = self.pattern_memory[pattern_key]['outcomes']
+                    success_rate = sum(1 for o in outcomes if o > 0) / len(outcomes)
+                    self.pattern_memory[pattern_key]['confidence'] = success_rate
+                    self.pattern_memory[pattern_key]['outcome'] = sum(outcomes) / len(outcomes)
+                    break
     
     def _validate_decision(self, decision: Dict) -> bool:
         """Validate decision format"""

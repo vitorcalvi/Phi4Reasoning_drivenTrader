@@ -116,8 +116,18 @@ class BotEngine:
             
             # Volume ratio
             try:
-                volume_avg = float(talib.SMA(volume, timeperiod=20)[-1]) if len(volume) >= 20 else float(volume[-1])
-                volume_ratio = float(volume[-1]) / volume_avg if volume_avg > 0 else 1
+                if len(volume) >= 20:
+                    volume_avg = float(talib.SMA(volume, timeperiod=20)[-1])
+                    volume_ratio = float(volume[-1]) / volume_avg if volume_avg > 0 else 1
+                else:
+                    # Not enough data for SMA, compare to mean
+                    volume_avg = float(np.mean(volume))
+                    volume_ratio = float(volume[-1]) / volume_avg if volume_avg > 0 else 1
+                
+                # Ensure reasonable bounds and handle very low volumes
+                if volume_ratio < 0.01:
+                    volume_ratio = 0.1  # Minimum 0.1x for very low volume
+                volume_ratio = max(0.1, min(volume_ratio, 10.0))
             except:
                 volume_ratio = 1
             
