@@ -9,7 +9,9 @@ from datetime import datetime
 from typing import Dict, Optional, List
 import numpy as np
 
+
 logger = logging.getLogger(__name__)
+
 
 
 class LLMEngine:
@@ -106,22 +108,37 @@ class LLMEngine:
         if position:
             return None  # Let pattern system handle exits
         
-        # Explicit rules that Phi-4 can follow
-        prompt = f"""You must follow these exact rules:
-1. If RSI is below 30, you MUST respond: LONG
-2. If RSI is above 70, you MUST respond: SHORT
-3. If RSI is between 30 and 70, you MUST respond: WAIT
+        # System prompt to enforce concise output
+        system_prompt = """You are a precise trading bot. Respond with ONLY the action word: LONG, SHORT, or WAIT. Do NOT use <think> tags, explanations, reasoning, or any extra text. Just the single word."""
+        
+        # Few-shot prompt with examples
+        user_prompt = f"""RSI rules:
+- RSI < 30: LONG
+- RSI > 70: SHORT  
+- RSI >= 30 and RSI <= 70: WAIT
 
-Current RSI is {rsi}. What is your response?"""
+Examples:
+RSI 25 → LONG
+RSI 75 → SHORT
+RSI 50 → WAIT
+RSI 30 → WAIT
+RSI 70 → WAIT
+
+RSI {rsi} →"""
+        
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
         
         try:
             response = requests.post(
                 self.llm_url,
                 json={
                     "model": self.llm_model,
-                    "messages": [{"role": "user", "content": prompt}],
+                    "messages": messages,
                     "temperature": 0.0,
-                    "max_tokens": 500
+                    "max_tokens": 1024
                 },
                 timeout=10
             )
@@ -129,20 +146,52 @@ Current RSI is {rsi}. What is your response?"""
             if response.status_code == 200:
                 content = response.json()['choices'][0]['message']['content']
                 
-                # Extract action
-                content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
-                content = content.replace('\\boxed{', '').replace('}', '').upper()
-                
-                for action in ['LONG', 'SHORT', 'WAIT']:
-                    if action in content:
-                        return {
-                            "action": action,
-                            "confidence": 0.6,
-                            "reason": f"LLM signal (RSI={rsi})"
-                        }
+                # Extract action robustly
+                action = self._extract_action(content)
+                if action and action in ['LONG', 'SHORT']:
+                    return {
+                        "action": action,
+                        "confidence": 0.6,
+                        "reason": f"LLM signal (RSI={rsi})"
+                    }
         
         except Exception as e:
             logger.debug(f"LLM error: {e}")
+        
+        return None
+    
+    def _extract_action(self, content: str) -> Optional[str]:
+        """Extract trading action from response"""
+        # Normalize to upper case
+        content_upper = content.upper()
+        
+        # Split on </think> and take text after the last one
+        parts = re.split(r'</THINK>', content_upper, flags=re.IGNORECASE)
+        if len(parts) > 1:
+            post_think = parts[-1].strip()
+            # Look for standalone action in post-think text
+            match = re.search(r'\b(LONG|SHORT|WAIT)\b', post_think)
+            if match:
+                return match.group(1)
+            
+            # Handle boxed or formatted actions
+            boxed_match = re.search(r'\\BOXED\{(LONG|SHORT|WAIT)\}', post_think)
+            if boxed_match:
+                return boxed_match.group(1)
+        
+        # If no post-think text, search entire cleaned content
+        cleaned = re.sub(r'<[^>]+>.*?</[^>]+>', '', content_upper, flags=re.DOTALL).strip()
+        actions = re.findall(r'\b(LONG|SHORT|WAIT)\b', cleaned)
+        if actions:
+            # Return the last mentioned action
+            return actions[-1]
+        
+        # Fallback search
+        actions_original = re.findall(r'\b(LONG|SHORT|WAIT)\b', content_upper)
+        if actions_original:
+            unique_actions = set(actions_original)
+            if len(unique_actions) == 1:
+                return list(unique_actions)[0]
         
         return None
 

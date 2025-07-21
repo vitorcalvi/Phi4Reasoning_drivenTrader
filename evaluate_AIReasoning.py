@@ -19,29 +19,51 @@ class Phi4ExplicitRules:
         """
         rsi_int = int(rsi)
         
-        # First try LLM with improved prompt, retry once if fails
-        llm_result = self._try_llm_signal(rsi_int)
+        # First try LLM with primary prompt
+        llm_result = self._try_llm_signal(rsi_int, variant=0)
         if llm_result:
             return llm_result
         
-        llm_result = self._try_llm_signal(rsi_int, retry=True)  # Retry with alternative prompt
+        # Retry with alternative prompt
+        llm_result = self._try_llm_signal(rsi_int, variant=1)
         if llm_result:
             return llm_result
         
-        # Fallback to deterministic rules if LLM fails
-        print(f"DEBUG: LLM failed for RSI {rsi_int}, using fallback rules")
+        # Second retry with another variant
+        llm_result = self._try_llm_signal(rsi_int, variant=2)
+        if llm_result:
+            return llm_result
+        
+        # Fallback to deterministic rules if all LLM attempts fail
+        print(f"DEBUG: All LLM attempts failed for RSI {rsi_int}, using fallback rules")
         return self._get_deterministic_signal(rsi_int)
     
-    def _try_llm_signal(self, rsi_int: int, retry: bool = False) -> Optional[str]:
-        """Try to get signal from LLM with few-shot prompting"""
-        if retry:
-            # Alternative prompt for retry: More explicit with boundaries
-            prompt = f"""You are a trading bot following exact RSI rules. Respond with ONLY the action word.
+    def _try_llm_signal(self, rsi_int: int, variant: int = 0) -> Optional[str]:
+        """Try to get signal from LLM with different prompt variants"""
+        system_prompt = """You are a precise trading bot. Respond with ONLY the action word: LONG, SHORT, or WAIT. Do NOT use <think> tags, explanations, reasoning, or any extra text. Just the single word."""
+        
+        if variant == 0:
+            # Primary: Few-shot with arrow format
+            user_prompt = f"""RSI rules:
+- RSI < 30: LONG
+- RSI > 70: SHORT  
+- RSI >= 30 and RSI <= 70: WAIT
 
-Rules (strict boundaries):
-- If RSI strictly less than 30 (RSI < 30): LONG
-- If RSI strictly greater than 70 (RSI > 70): SHORT
-- Otherwise (RSI >= 30 and RSI <= 70): WAIT
+Examples:
+RSI 25 → LONG
+RSI 75 → SHORT
+RSI 50 → WAIT
+RSI 30 → WAIT
+RSI 70 → WAIT
+
+RSI {rsi_int} →"""
+        
+        elif variant == 1:
+            # Variant 1: Explicit strict boundaries with output instruction
+            user_prompt = f"""Strict RSI rules:
+- If RSI < 30: LONG
+- If RSI > 70: SHORT
+- If RSI >= 30 and RSI <= 70: WAIT
 
 Examples:
 RSI: 29 → LONG
@@ -51,45 +73,42 @@ RSI: 71 → SHORT
 
 Current RSI: {rsi_int}
 
-Your answer (one word only):"""
-        else:
-            # Primary prompt with few-shot examples
-            prompt = f"""You are a trading bot. Follow these RSI rules exactly and respond with ONLY the action: LONG, SHORT, or WAIT. No explanations, no thinking tags, no extra text.
+Output ONLY the action word:"""
+        
+        elif variant == 2:
+            # Variant 2: Force concise output with placeholder
+            user_prompt = f"""Determine action for RSI {rsi_int}:
+- < 30: LONG
+- > 70: SHORT
+- else: WAIT
 
-Rules:
-- RSI < 30: LONG
-- RSI > 70: SHORT  
-- RSI >= 30 and <= 70: WAIT
-
-Examples:
-Input: RSI 25 → LONG
-Input: RSI 75 → SHORT
-Input: RSI 50 → WAIT
-Input: RSI 30 → WAIT
-Input: RSI 70 → WAIT
-
-Input: RSI {rsi_int} →"""
+Action:"""
+        
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
         
         try:
             response = requests.post(
                 self.llm_url,
                 json={
                     "model": self.model,
-                    "messages": [{"role": "user", "content": prompt}],
+                    "messages": messages,
                     "temperature": 0.0,
-                    "max_tokens": 200  # Increased to allow for completion
+                    "max_tokens": 1024  # Increased significantly to prevent truncation
                 },
                 timeout=10
             )
             
             if response.status_code == 200:
                 content = response.json()['choices'][0]['message']['content']
-                print(f"DEBUG: Raw LLM response for RSI {rsi_int} (retry={retry}): {content}")
+                print(f"DEBUG: Raw LLM response for RSI {rsi_int} (variant={variant}): {content}")
                 action = self._extract_action(content)
                 if action:
                     return action
                 else:
-                    print(f"DEBUG: Extraction failed on {'retry' if retry else 'first try'}")
+                    print(f"DEBUG: Extraction failed for variant {variant}")
             
         except Exception as e:
             print(f"LLM error: {e}")
@@ -106,27 +125,40 @@ Input: RSI {rsi_int} →"""
             return "WAIT"
     
     def _extract_action(self, content: str) -> Optional[str]:
-        """Extract trading action from response - robust logic"""
-        # Clean content thoroughly
-        content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
-        content = re.sub(r'<[^>]+>.*?</[^>]+>', '', content, flags=re.DOTALL)
-        content = content.replace('\\boxed{', '').replace('}', '').replace('"', '').replace('→', '').strip()
-        
+        """Extract trading action from response - improved to handle tags and truncation"""
         # Normalize to upper case
         content_upper = content.upper()
         
-        # Look for exact standalone action
-        match = re.match(r'^(LONG|SHORT|WAIT)$', content_upper.strip())
-        if match:
-            return match.group(1)
+        # Split on </think> and take text after the last one
+        parts = re.split(r'</THINK>', content_upper, flags=re.IGNORECASE)
+        if len(parts) > 1:
+            post_think = parts[-1].strip()
+            # Look for standalone action in post-think text
+            match = re.search(r'\b(LONG|SHORT|WAIT)\b', post_think)
+            if match:
+                return match.group(1)
+            
+            # Handle boxed or formatted actions
+            boxed_match = re.search(r'\\BOXED\{(LONG|SHORT|WAIT)\}', post_think)
+            if boxed_match:
+                return boxed_match.group(1)
         
-        # Look for pattern like "LONG" anywhere, but prioritize the first clear one
-        actions = re.findall(r'\b(LONG|SHORT|WAIT)\b', content_upper)
+        # If no post-think text (truncated inside think), or no match, search entire cleaned content
+        cleaned = re.sub(r'<[^>]+>.*?</[^>]+>', '', content_upper, flags=re.DOTALL).strip()
+        actions = re.findall(r'\b(LONG|SHORT|WAIT)\b', cleaned)
         if actions:
-            # Return the last one, as it might be the final answer
+            # Return the last mentioned action (likely the conclusion)
             return actions[-1]
         
-        print(f"DEBUG: No action extracted from: {content}")
+        # Fallback search in original
+        actions_original = re.findall(r'\b(LONG|SHORT|WAIT)\b', content_upper)
+        if actions_original:
+            # Avoid picking from rules; prefer if there's only one unique, but to be safe, return None if ambiguous
+            unique_actions = set(actions_original)
+            if len(unique_actions) == 1:
+                return list(unique_actions)[0]
+        
+        print(f"DEBUG: No reliable action extracted from: {content}")
         return None
     
     def test_rules(self):
