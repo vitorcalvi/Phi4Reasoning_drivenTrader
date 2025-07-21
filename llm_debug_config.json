@@ -1,0 +1,15 @@
+{
+  "llm_config": {
+    "model": "local-model",
+    "best_extraction_method": "anywhere",
+    "best_prompt_style": {
+      "prompt": "RSI: 25, Volume: 1.5x. Should I go LONG, SHORT, or WAIT?",
+      "system": null,
+      "method": "anywhere"
+    },
+    "all_methods_scores": {
+      "anywhere": 3
+    },
+    "recommendations": []
+  }
+}

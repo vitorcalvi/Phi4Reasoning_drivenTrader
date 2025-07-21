@@ -1,13 +1,13 @@
-# 1-Minute Scalping Strategy Configuration - TESTNET VERSION
-name: '1-Minute Scalping'
-version: '1.0'
-description: 'High-frequency scalping strategy for 1-minute timeframe'
+# Updated 1-Minute Scalping Strategy Configuration
+name: '1-Minute Scalping Simplified'
+version: '1.1'
+description: 'Simplified high-frequency scalping strategy for 1-minute timeframe'
 author: 'LLM Trading Bot'
 
 # Timeframe settings
 timeframe:
   primary: '1m'
-  analysis: ['1m', '5m', '15m'] # Multi-timeframe analysis
+  analysis: ['1m', '5m'] # Multi-timeframe analysis for trend confirmation
 
 # Entry conditions
 entry:
@@ -17,29 +17,20 @@ entry:
         timeframe: '1m'
         operator: '<'
         value: 35
-        weight: 0.4 # Increased weight
-
-      - indicator: 'volume_ratio'
+        weight: 0.5
+      - indicator: 'above_ma'
+        ma_type: 'sma'
+        ma_period: 50
+        ma_timeframe: '5m'
         timeframe: '1m'
-        operator: '>'
-        value: 1.2 # Lowered from 1.5
-        weight: 0.3
-
-      - indicator: 'orderbook_imbalance'
-        operator: '>'
-        value: 0.05 # Lowered from 0.1
-        weight: 0.3
-
-    # Lowered for testing
-    min_confidence: 0.5 # Lowered from 0.7
-
-    # Additional filters
+        weight: 0.5
+    min_confidence: 1.0 # Both conditions must be true
     filters:
       - name: 'spread_filter'
-        max_spread_pct: 0.1 # Increased from 0.05
+        max_spread_pct: 0.1
       - name: 'volatility_filter'
         min_atr_pct: 0.1
-        max_atr_pct: 5.0 # Increased from 3.0
+        max_atr_pct: 5.0
 
   short:
     conditions:
@@ -47,57 +38,41 @@ entry:
         timeframe: '1m'
         operator: '>'
         value: 65
-        weight: 0.4 # Increased weight
-
-      - indicator: 'volume_ratio'
+        weight: 0.5
+      - indicator: 'below_ma'
+        ma_type: 'sma'
+        ma_period: 50
+        ma_timeframe: '5m'
         timeframe: '1m'
-        operator: '>'
-        value: 1.2 # Lowered from 1.5
-        weight: 0.3
-
-      - indicator: 'orderbook_imbalance'
-        operator: '<'
-        value: -0.05 # Raised from -0.1
-        weight: 0.3
-
-    min_confidence: 0.5 # Lowered from 0.7
-
+        weight: 0.5
+    min_confidence: 1.0 # Both conditions must be true
     filters:
       - name: 'spread_filter'
-        max_spread_pct: 0.1 # Increased from 0.05
+        max_spread_pct: 0.1
       - name: 'volatility_filter'
         min_atr_pct: 0.1
         max_atr_pct: 5.0
 
 # Exit conditions
 exit:
-  # Take profit settings
   take_profit:
-    type: 'percentage' # or "atr_multiple" or "fixed"
-    value: 0.3 # 0.3% for quick scalping in testnet
-
-  # Stop loss settings
+    type: 'percentage'
+    value: 0.3
   stop_loss:
     type: 'percentage'
-    value: 0.2 # 0.2% stop loss
-
-  # Trailing stop
+    value: 0.2
   trailing_stop:
-    enabled: false # Disabled for testing
-    activation_profit: 0.3 # Activate after 0.3% profit
-    trail_distance: 0.1 # Trail by 0.1%
-
-  # Time-based exit
+    enabled: false
+    activation_profit: 0.3
+    trail_distance: 0.1
   time_stop:
     enabled: true
-    max_duration: 300 # 5 minutes max hold time
+    max_duration: 300
 
 # Position sizing
 position_sizing:
-  method: 'fixed_percentage' # or "kelly", "volatility_adjusted"
-  base_size: 10 # Base size in USDT
-
-  # Size adjustments
+  method: 'fixed_percentage'
+  base_size: 10
   adjustments:
     - factor: 'confidence'
       min_multiplier: 0.8
@@ -105,30 +80,23 @@ position_sizing:
 
 # Risk management
 risk_management:
-  max_position_size: 50 # Reduced for testing
-  max_open_positions: 1 # Only 1 position at a time for scalping
-
-  # Daily limits
+  max_position_size: 50
+  max_open_positions: 1
   daily_limits:
-    max_trades: 50 # Increased for testing
-    max_loss: 50 # USDT
-    max_consecutive_losses: 5 # Increased from 3
-
-  # Risk per trade
+    max_trades: 50
+    max_loss: 50
+    max_consecutive_losses: 5
   risk_per_trade:
     type: 'percentage'
-    value: 1 # 1% of account
+    value: 1
 
 # Market conditions
 market_conditions:
-  # Favorable conditions for this strategy
   favorable:
     - volatility: 'medium'
-    - trend: 'any' # Scalping works in any trend
+    - trend: 'any'
     - volume: 'high'
-    - time_zones: ['London', 'NewYork'] # Active sessions
-
-  # Avoid these conditions
+    - time_zones: ['London', 'NewYork']
   avoid:
     - volatility: 'extreme'
     - volume: 'very_low'
@@ -136,7 +104,7 @@ market_conditions:
 
 # Performance targets
 performance_targets:
-  daily_profit_target: 20 # USDT
-  win_rate_target: 0.6 # 60%
+  daily_profit_target: 20
+  win_rate_target: 0.6
   profit_factor_target: 1.5
-  max_drawdown: 10 # Percentage
+  max_drawdown: 10

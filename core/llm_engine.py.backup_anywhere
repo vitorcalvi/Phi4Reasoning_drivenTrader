@@ -102,11 +102,11 @@ class LLMEngine:
         market = context['current_market']
         position = context['position']
         
-        # Use prompt style that worked best in debug
+        # Clear prompt that any LLM can understand
         if position:
-            prompt = f"Current position PNL: {position.get('pnl_percent', 0):.1f}%. RSI: {int(market['rsi'])}. Should I CLOSE the position or WAIT?"
+            prompt = f"Trading bot decision. Current position PNL: {position.get('pnl_percent', 0):.1f}%. RSI: {int(market['rsi'])}. Should I CLOSE the position or WAIT? Reply with only: CLOSE or WAIT"
         else:
-            prompt = f"RSI: {int(market['rsi'])}, Volume: {market['volume_ratio']:.1f}x. Should I go LONG, SHORT, or WAIT?"
+            prompt = f"Trading bot decision. RSI: {int(market['rsi'])}, Volume: {market['volume_ratio']:.1f}x normal. Should I go LONG, SHORT, or WAIT? Reply with only: LONG, SHORT, or WAIT"
         
         try:
             response = requests.post(
@@ -115,82 +115,31 @@ class LLMEngine:
                     "model": self.llm_model,
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0.1,
-                    "max_tokens": 200
+                    "max_tokens": 100
                 },
-                timeout=10
+                timeout=5
             )
             
             if response.status_code == 200:
-                content = response.json()['choices'][0]['message']['content']
-                logger.debug(f"LLM raw response: {content[:200]}")
+                content = response.json()['choices'][0]['message']['content'].upper()
+                logger.debug(f"LLM response: {content[:100]}")  # Log first 100 chars
                 
-                # Extract action using 'anywhere' method
-                action = self._extract_llm_action_anywhere(content, position is not None)
-                
-                if action:
-                    logger.debug(f"Extracted action: {action}")
-                    
-                    if action == 'LONG' and not position:
-                        return {"action": "LONG", "confidence": 0.6, "reason": "LLM signal"}
-                    elif action == 'SHORT' and not position:
-                        return {"action": "SHORT", "confidence": 0.6, "reason": "LLM signal"}
-                    elif action == 'CLOSE' and position:
-                        return {"action": "CLOSE", "confidence": 0.7, "reason": "LLM signal"}
-                    elif action == 'WAIT':
-                        return {"action": "WAIT", "confidence": 0.5, "reason": "LLM signal"}
+                # More flexible keyword extraction
+                if 'LONG' in content and 'SHORT' not in content:
+                    return {"action": "LONG", "confidence": 0.6, "reason": "LLM signal"}
+                elif 'SHORT' in content and 'LONG' not in content:
+                    return {"action": "SHORT", "confidence": 0.6, "reason": "LLM signal"}
+                elif 'CLOSE' in content:
+                    return {"action": "CLOSE", "confidence": 0.7, "reason": "LLM signal"}
+                elif 'WAIT' in content:
+                    return {"action": "WAIT", "confidence": 0.5, "reason": "LLM signal"}
                 else:
-                    logger.debug("No valid action found in LLM response")
+                    logger.debug(f"LLM response not understood: {content[:50]}")
         except Exception as e:
             logger.debug(f"LLM error: {str(e)[:50]}")
         
         return None
     
-    def _extract_llm_action_anywhere(self, content: str, has_position: bool) -> Optional[str]:
-        """Extract action from anywhere in the LLM response"""
-        # Remove <think> tags first
-        content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
-        
-        # Convert to uppercase for searching
-        content_upper = content.upper()
-        
-        # Remove negations that might confuse
-        content_upper = re.sub(r"(DON'T|SHOULDN'T|WON'T|NOT)\s+(LONG|SHORT|WAIT|CLOSE)", "", content_upper)
-        
-        # Priority order based on context
-        if has_position:
-            # When we have a position, prioritize CLOSE and WAIT
-            actions = ['CLOSE', 'WAIT']
-        else:
-            # When we don't have a position, check all entry actions
-            actions = ['LONG', 'SHORT', 'WAIT']
-        
-        # Look for each action
-        found_actions = []
-        for action in actions:
-            # Use word boundaries to avoid partial matches
-            pattern = r'' + action + r''
-            if re.search(pattern, content_upper):
-                # Count occurrences
-                count = len(re.findall(pattern, content_upper))
-                found_actions.append((action, count))
-                logger.debug(f"Found '{action}' {count} times")
-        
-        # Return the most frequently mentioned valid action
-        if found_actions:
-            # Sort by count (descending)
-            found_actions.sort(key=lambda x: x[1], reverse=True)
-            return found_actions[0][0]
-        
-        # Fallback: check for related terms
-        if not has_position:
-            if any(word in content_upper for word in ['BUY', 'BULLISH', 'UPWARD', 'PURCHASE']):
-                return 'LONG'
-            elif any(word in content_upper for word in ['SELL', 'BEARISH', 'DOWNWARD']):
-                return 'SHORT'
-        
-        return None
-
-
     def _pattern_based_decision(self, context: Dict) -> Dict:
         """Main decision logic based on learned patterns"""
         market = context['current_market']
