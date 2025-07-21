@@ -1,0 +1,27 @@
+{
+  "performance": {
+    "total_trades": 1,
+    "winning_trades": 0,
+    "total_pnl": -0.011960000000000725,
+    "max_drawdown": 0,
+    "start_balance": 0.0,
+    "current_balance": 0.0
+  },
+  "trades": [
+    {
+      "side": "LONG",
+      "entry_price": 1.0784,
+      "exit_price": 1.0771,
+      "quantity": 9.2,
+      "pnl": -0.011960000000000725,
+      "pnl_percent": -0.12054896142433966,
+      "entry_time": "2025-07-21T08:44:45.937198",
+      "exit_time": "2025-07-21T08:48:18.306291",
+      "duration_minutes": 3.53948515,
+      "entry_reason": "Oversold RSI 30, volume 1.2x",
+      "exit_reason": "Bot Shutdown"
+    }
+  ],
+  "final_balance": 0.0,
+  "timestamp": "2025-07-21T08:48:18.776694"
+}

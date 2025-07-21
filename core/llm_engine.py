@@ -59,33 +59,88 @@ class LLMEngine:
             except Exception as e:
                 logger.error(f"❌ Error loading {file}: {e}")
         
-        self.current_strategy = '1-Minute Scalping'
+        # Set current strategy
+        if '1-Minute Scalping' in self.strategies:
+            self.current_strategy = '1-Minute Scalping'
+        elif self.strategies:
+            self.current_strategy = list(self.strategies.keys())[0]
+        
+        if self.current_strategy:
+            logger.info(f"🎯 Active strategy: {self.current_strategy}")
+        
         return self.strategies
     
+    def _get_strategy_params(self) -> Dict:
+        """Get current strategy parameters"""
+        if not self.current_strategy or self.current_strategy not in self.strategies:
+            # Return default values if no strategy loaded
+            return {
+                'entry': {
+                    'long': {
+                        'rsi_oversold': 30,
+                        'volume_multiplier': 1.5,
+                        'spread_limit': 0.05,
+                        'confidence_threshold': 0.7
+                    },
+                    'short': {
+                        'rsi_overbought': 70,
+                        'volume_multiplier': 1.5,
+                        'spread_limit': 0.05,
+                        'confidence_threshold': 0.7
+                    }
+                },
+                'exit': {
+                    'take_profit_pct': 1.0,
+                    'stop_loss_pct': 0.5,
+                    'max_duration_minutes': 30
+                },
+                'position_sizing': {
+                    'base_size': 10,
+                    'max_size': 100
+                }
+            }
+        
+        return self.strategies[self.current_strategy]
+    
     async def make_decision(self, market_data: Dict, position: Optional[Dict], performance: Dict) -> Dict:
-        """AI-driven trading decision"""
+        """AI-driven trading decision using loaded strategy"""
         indicators = market_data.get('indicators', {})
         price = indicators.get('price', 0)
         rsi = indicators.get('rsi', 50)
         volume_ratio = indicators.get('volume_ratio', 1)
         spread_pct = market_data.get('orderbook', {}).get('spread_pct', 0.05)
         
-        # AI Logic: Calculate decision based on market conditions
+        # Get strategy parameters
+        strategy = self._get_strategy_params()
+        
+        # AI Logic: Calculate decision based on strategy parameters
         if position:
-            # Position management
+            # Position management using strategy exit rules
             pnl_pct = position.get('pnl_percent', 0)
+            duration_minutes = position.get('duration_seconds', 0) / 60
             
-            if pnl_pct >= 1.0:  # 1% profit
+            exit_params = strategy.get('exit', {})
+            take_profit_pct = exit_params.get('take_profit_pct', 1.0)
+            stop_loss_pct = exit_params.get('stop_loss_pct', 0.5)
+            max_duration = exit_params.get('max_duration_minutes', 30)
+            
+            if pnl_pct >= take_profit_pct:
                 decision = {
                     "action": "CLOSE",
                     "confidence": 0.9,
-                    "reason": f"Take profit at {pnl_pct:.1f}%"
+                    "reason": f"Take profit at {pnl_pct:.1f}% (target: {take_profit_pct}%)"
                 }
-            elif pnl_pct <= -0.5:  # 0.5% loss
+            elif pnl_pct <= -stop_loss_pct:
                 decision = {
                     "action": "CLOSE", 
                     "confidence": 0.95,
-                    "reason": f"Stop loss at {pnl_pct:.1f}%"
+                    "reason": f"Stop loss at {pnl_pct:.1f}% (limit: -{stop_loss_pct}%)"
+                }
+            elif duration_minutes >= max_duration:
+                decision = {
+                    "action": "CLOSE",
+                    "confidence": 0.8,
+                    "reason": f"Max duration reached: {duration_minutes:.0f}min"
                 }
             else:
                 decision = {
@@ -94,30 +149,50 @@ class LLMEngine:
                     "reason": f"Holding position, PnL: {pnl_pct:.1f}%"
                 }
         else:
-            # Entry logic
-            if rsi < 30 and volume_ratio > 1.5 and spread_pct < 0.05:
+            # Entry logic using strategy entry rules
+            entry_params = strategy.get('entry', {})
+            long_params = entry_params.get('long', {})
+            short_params = entry_params.get('short', {})
+            position_params = strategy.get('position_sizing', {})
+            
+            # Long entry conditions
+            rsi_oversold = long_params.get('rsi_oversold', 30)
+            volume_multiplier = long_params.get('volume_multiplier', 1.5)
+            spread_limit = long_params.get('spread_limit', 0.05)
+            base_size = position_params.get('base_size', self.config.DEFAULT_POSITION_SIZE)
+            
+            if (rsi < rsi_oversold and 
+                volume_ratio > volume_multiplier and 
+                spread_pct < spread_limit):
+                
                 decision = {
                     "action": "LONG",
                     "confidence": 0.8,
-                    "reason": f"Oversold RSI {rsi:.0f}, high volume",
-                    "position_size": self.config.DEFAULT_POSITION_SIZE,
-                    "stop_loss": price * 0.995,
-                    "take_profit": price * 1.01
+                    "reason": f"Strategy signal: RSI {rsi:.0f} < {rsi_oversold}, vol {volume_ratio:.1f}x",
+                    "position_size": base_size,
+                    "stop_loss": price * (1 - strategy.get('exit', {}).get('stop_loss_pct', 0.5) / 100),
+                    "take_profit": price * (1 + strategy.get('exit', {}).get('take_profit_pct', 1.0) / 100)
                 }
-            elif rsi > 70 and volume_ratio > 1.5 and spread_pct < 0.05:
+            
+            # Short entry conditions  
+            elif (rsi > short_params.get('rsi_overbought', 70) and 
+                  volume_ratio > volume_multiplier and 
+                  spread_pct < spread_limit):
+                
                 decision = {
                     "action": "SHORT",
                     "confidence": 0.8,
-                    "reason": f"Overbought RSI {rsi:.0f}, high volume",
-                    "position_size": self.config.DEFAULT_POSITION_SIZE,
-                    "stop_loss": price * 1.005,
-                    "take_profit": price * 0.99
+                    "reason": f"Strategy signal: RSI {rsi:.0f} > {short_params.get('rsi_overbought', 70)}, vol {volume_ratio:.1f}x",
+                    "position_size": base_size,
+                    "stop_loss": price * (1 + strategy.get('exit', {}).get('stop_loss_pct', 0.5) / 100),
+                    "take_profit": price * (1 - strategy.get('exit', {}).get('take_profit_pct', 1.0) / 100)
                 }
+            
             else:
                 decision = {
                     "action": "WAIT",
                     "confidence": 0.5,
-                    "reason": f"No clear signal (RSI: {rsi:.0f})"
+                    "reason": f"No strategy signal (RSI: {rsi:.0f}, Vol: {volume_ratio:.1f}x)"
                 }
         
         # Try LLM confirmation if available
@@ -127,12 +202,13 @@ class LLMEngine:
                 decision = confirmed
         
         # Log decision
-        logger.info(f"🤖 AI Decision: {decision['action']} - {decision['reason']}")
+        logger.info(f"🤖 Strategy Decision: {decision['action']} - {decision['reason']}")
         logger.info(f"🎯 Confidence: {decision['confidence']:.0%}")
         
         # Record history
         self.decision_history.append({
             'timestamp': datetime.now().isoformat(),
+            'strategy': self.current_strategy,
             'decision': decision,
             'price': price,
             'rsi': rsi
@@ -221,5 +297,6 @@ class LLMEngine:
         return {
             'total_decisions': len(recent),
             'action_distribution': action_counts,
+            'current_strategy': self.current_strategy,
             'last_decision': recent[-1] if recent else None
         }
