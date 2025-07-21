@@ -322,6 +322,18 @@ class BotEngine:
                 else:
                     pnl = (self.current_position['entry_price'] - price) * self.current_position['quantity']
                 
+                # Calculate trading fees (0.055% maker fee each way = 0.11% round trip)
+                MAKER_FEE_RATE = 0.00055  # 0.055% Bybit maker fee
+                entry_value = self.current_position['entry_price'] * self.current_position['quantity']
+                exit_value = price * self.current_position['quantity']
+                entry_fee = entry_value * MAKER_FEE_RATE
+                exit_fee = exit_value * MAKER_FEE_RATE
+                total_fees = entry_fee + exit_fee
+                
+                # Adjust P&L for fees
+                gross_pnl = pnl
+                pnl = pnl - total_fees  # Net P&L after fees
+                
                 pnl_pct = (pnl / (self.current_position['entry_price'] * self.current_position['quantity'])) * 100
                 
                 # Record trade
@@ -330,7 +342,9 @@ class BotEngine:
                     'entry_price': self.current_position['entry_price'],
                     'exit_price': price,
                     'quantity': self.current_position['quantity'],
-                    'pnl': pnl,
+                    'gross_pnl': gross_pnl,
+                    'fees': total_fees,
+                    'pnl': pnl,  # Net P&L after fees
                     'pnl_percent': pnl_pct,
                     'entry_time': self.current_position['entry_time'].isoformat(),
                     'exit_time': datetime.now().isoformat(),
@@ -357,7 +371,7 @@ class BotEngine:
                 if self.llm_engine and self.entry_decision:
                     self.llm_engine.record_trade_outcome(self.entry_decision, price, pnl)
                 
-                logger.info(f"💰 Closed {self.current_position['side']}: ${pnl:.2f} ({pnl_pct:.1f}%) - {reason}")
+                logger.info(f"💰 Closed {self.current_position['side']}: ${gross_pnl:.2f} gross - ${total_fees:.3f} fees = ${pnl:.2f} net ({pnl_pct:.1f}%) - {reason}")
                 
                 self.current_position = None
                 self.entry_decision = None
