@@ -34,7 +34,9 @@ class BotEngine:
             'total_pnl': 0,
             'max_drawdown': 0,
             'start_balance': 0,
-            'current_balance': 0
+            'current_balance': 0,
+            'consecutive_wins': 0,
+            'consecutive_losses': 0
         }
     
     def set_llm_engine(self, llm_engine):
@@ -120,13 +122,9 @@ class BotEngine:
                     volume_avg = float(talib.SMA(volume, timeperiod=20)[-1])
                     volume_ratio = float(volume[-1]) / volume_avg if volume_avg > 0 else 1
                 else:
-                    # Not enough data for SMA, compare to mean
                     volume_avg = float(np.mean(volume))
                     volume_ratio = float(volume[-1]) / volume_avg if volume_avg > 0 else 1
                 
-                # Ensure reasonable bounds and handle very low volumes
-                if volume_ratio < 0.01:
-                    volume_ratio = 0.1  # Minimum 0.1x for very low volume
                 volume_ratio = max(0.1, min(volume_ratio, 10.0))
             except:
                 volume_ratio = 1
@@ -218,23 +216,6 @@ class BotEngine:
             recent = self.trade_history[-10:]
             metrics['recent_trades'] = len(recent)
             metrics['recent_win_rate'] = len([t for t in recent if t['pnl'] > 0]) / len(recent)
-            
-            # Consecutive wins/losses
-            if self.trade_history:
-                last_trade = self.trade_history[-1]
-                consecutive = 1
-                for i in range(len(self.trade_history) - 2, -1, -1):
-                    if (self.trade_history[i]['pnl'] > 0) == (last_trade['pnl'] > 0):
-                        consecutive += 1
-                    else:
-                        break
-                
-                if last_trade['pnl'] > 0:
-                    metrics['consecutive_wins'] = consecutive
-                    metrics['consecutive_losses'] = 0
-                else:
-                    metrics['consecutive_wins'] = 0
-                    metrics['consecutive_losses'] = consecutive
         
         metrics['current_balance'] = await self.get_account_balance()
         return metrics
@@ -276,13 +257,26 @@ class BotEngine:
             )
             
             if response.get('retCode') == 0:
+                # Calculate stop loss and take profit based on percentages
+                stop_loss_pct = decision.get('stop_loss_pct', -0.5)  # Default 0.5% loss
+                take_profit_pct = decision.get('take_profit_pct', 1.0)  # Default 1% profit
+                
+                if side == 'LONG':
+                    stop_loss = price * (1 + stop_loss_pct / 100)
+                    take_profit = price * (1 + take_profit_pct / 100)
+                else:
+                    stop_loss = price * (1 - stop_loss_pct / 100)
+                    take_profit = price * (1 - take_profit_pct / 100)
+                
                 self.current_position = {
                     'side': side,
                     'entry_price': price,
                     'quantity': float(quantity),
                     'entry_time': datetime.now(),
-                    'stop_loss': decision.get('stop_loss', price * (0.995 if side == 'LONG' else 1.005)),
-                    'take_profit': decision.get('take_profit', price * (1.01 if side == 'LONG' else 0.99)),
+                    'stop_loss': stop_loss,
+                    'take_profit': take_profit,
+                    'stop_loss_pct': stop_loss_pct,
+                    'take_profit_pct': take_profit_pct,
                     'entry_reason': decision.get('reason', 'AI Signal')
                 }
                 
@@ -290,7 +284,8 @@ class BotEngine:
                 self.entry_decision = decision
                 
                 logger.info(f"📈 Opened {side}: {quantity} @ ${price:.4f}")
-                logger.info(f"🎯 AI Confidence: {decision.get('confidence', 0):.0%}")
+                logger.info(f"   Stop: ${stop_loss:.4f} ({stop_loss_pct}%) | Target: ${take_profit:.4f} ({take_profit_pct}%)")
+                logger.info(f"   AI Confidence: {decision.get('confidence', 0):.0%} - {decision.get('reason', '')}")
             else:
                 logger.error(f"❌ Order failed: {response.get('retMsg')}")
                 
@@ -350,6 +345,12 @@ class BotEngine:
                 self.performance_data['total_trades'] += 1
                 if pnl > 0:
                     self.performance_data['winning_trades'] += 1
+                    self.performance_data['consecutive_wins'] += 1
+                    self.performance_data['consecutive_losses'] = 0
+                else:
+                    self.performance_data['consecutive_losses'] += 1
+                    self.performance_data['consecutive_wins'] = 0
+                    
                 self.performance_data['total_pnl'] += pnl
                 
                 # Feed outcome back to AI for learning
@@ -357,7 +358,6 @@ class BotEngine:
                     self.llm_engine.record_trade_outcome(self.entry_decision, price, pnl)
                 
                 logger.info(f"💰 Closed {self.current_position['side']}: ${pnl:.2f} ({pnl_pct:.1f}%) - {reason}")
-                logger.info(f"🧠 AI Learning: Pattern recorded")
                 
                 self.current_position = None
                 self.entry_decision = None
@@ -370,6 +370,7 @@ class BotEngine:
     async def get_account_balance(self) -> float:
         """Get USDT balance"""
         try:
+            # Try method 1: get_wallet_balance
             response = self.exchange.get_wallet_balance(accountType="UNIFIED")
             
             if response.get('retCode') == 0:
@@ -378,9 +379,36 @@ class BotEngine:
                     coins = account.get('coin', [])
                     for coin in coins:
                         if coin.get('coin') == 'USDT':
-                            return float(coin.get('availableBalance', 0))
-        except:
-            pass
+                            balance = float(coin.get('availableBalance', 0))
+                            if balance > 0:
+                                return balance
+                            # Also check walletBalance
+                            wallet_balance = float(coin.get('walletBalance', 0))
+                            if wallet_balance > 0:
+                                return wallet_balance
+            
+            # Try method 2: get_coin_balance
+            response2 = self.exchange.get_coin_balance(
+                accountType="UNIFIED",
+                coin="USDT"
+            )
+            
+            if response2.get('retCode') == 0:
+                balance_data = response2.get('result', {}).get('balance', {})
+                if balance_data:
+                    available = float(balance_data.get('availableBalance', 0))
+                    if available > 0:
+                        return available
+                    wallet = float(balance_data.get('walletBalance', 0))
+                    if wallet > 0:
+                        return wallet
+            
+        except Exception as e:
+            logger.error(f"Balance check error: {e}")
+        
+        # Default testnet balance if all else fails
+        if self.config.TESTNET:
+            return 100.0  # Assume $100 for testnet
         
         return 0
     
@@ -429,7 +457,7 @@ class BotEngine:
     async def save_performance_data(self):
         """Save performance data and AI patterns"""
         try:
-            filename = f"ai_performance_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            filename = f"performance_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
             
             data = {
                 'performance': self.performance_data,

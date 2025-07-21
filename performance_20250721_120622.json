@@ -1,0 +1,68 @@
+{
+  "performance": {
+    "total_trades": 4,
+    "winning_trades": 3,
+    "total_pnl": 0.1349999999999966,
+    "max_drawdown": 0,
+    "start_balance": 111562.08469524,
+    "current_balance": 111562.08469524,
+    "consecutive_wins": 1,
+    "consecutive_losses": 0
+  },
+  "trades": [
+    {
+      "side": "SHORT",
+      "entry_price": 191.69,
+      "exit_price": 191.09,
+      "quantity": 0.1,
+      "pnl": 0.059999999999999436,
+      "pnl_percent": 0.31300537325890465,
+      "entry_time": "2025-07-21T11:34:38.058500",
+      "exit_time": "2025-07-21T11:39:45.992382",
+      "duration_minutes": 5.1322316,
+      "entry_reason": "Overbought RSI:68",
+      "exit_reason": "Time limit (5 min)"
+    },
+    {
+      "side": "SHORT",
+      "entry_price": 190.97,
+      "exit_price": 190.46,
+      "quantity": 0.1,
+      "pnl": 0.050999999999999095,
+      "pnl_percent": 0.26705765303450324,
+      "entry_time": "2025-07-21T11:40:55.071086",
+      "exit_time": "2025-07-21T11:45:59.835221",
+      "duration_minutes": 5.0794024166666665,
+      "entry_reason": "LLM signal",
+      "exit_reason": "Time limit (5 min)"
+    },
+    {
+      "side": "SHORT",
+      "entry_price": 191.57,
+      "exit_price": 191.77,
+      "quantity": 0.1,
+      "pnl": -0.020000000000001707,
+      "pnl_percent": -0.10440048024221801,
+      "entry_time": "2025-07-21T11:51:25.535786",
+      "exit_time": "2025-07-21T11:56:27.675585",
+      "duration_minutes": 5.0356637,
+      "entry_reason": "LLM signal",
+      "exit_reason": "Time limit (5 min)"
+    },
+    {
+      "side": "SHORT",
+      "entry_price": 191.93,
+      "exit_price": 191.49,
+      "quantity": 0.1,
+      "pnl": 0.043999999999999775,
+      "pnl_percent": 0.22925024748606143,
+      "entry_time": "2025-07-21T11:59:25.997997",
+      "exit_time": "2025-07-21T12:04:35.300895",
+      "duration_minutes": 5.155050166666666,
+      "entry_reason": "Overbought RSI:65",
+      "exit_reason": "Time limit (5 min)"
+    }
+  ],
+  "final_balance": 111562.12849574,
+  "timestamp": "2025-07-21T12:06:22.664831"
+}

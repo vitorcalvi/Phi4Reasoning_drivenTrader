@@ -7,6 +7,7 @@ import signal
 import sys
 import logging
 from datetime import datetime
+from typing import Dict, Optional
 from config import Config
 from core.bot_engine import BotEngine
 from core.llm_engine import LLMEngine
@@ -14,7 +15,7 @@ from risk.risk_management import RiskManager
 
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ class AITradingBot:
             return False
         
         if not await self.llm_engine.test_connection():
-            logger.warning("⚠️  AI Engine offline - using pattern-based decisions")
+            logger.info("⚠️  LLM offline - using pattern-based decisions")
         
         # Load AI patterns
         patterns = await self.llm_engine.load_strategies()
@@ -66,6 +67,33 @@ class AITradingBot:
         
         logger.info("✅ AI Systems operational")
         return True
+    
+    async def check_position_exits(self, position: Dict, market_data: Dict):
+        """Check if position should be closed based on stops/targets"""
+        if not position:
+            return
+        
+        current_price = market_data.get('price', 0)
+        
+        # Check stop loss
+        if position['side'] == 'LONG':
+            if current_price <= position['stop_loss']:
+                await self.bot_engine.close_position(f"Stop loss hit @ ${current_price:.4f}")
+                return
+        else:  # SHORT
+            if current_price >= position['stop_loss']:
+                await self.bot_engine.close_position(f"Stop loss hit @ ${current_price:.4f}")
+                return
+        
+        # Check take profit
+        if position['side'] == 'LONG':
+            if current_price >= position['take_profit']:
+                await self.bot_engine.close_position(f"Take profit hit @ ${current_price:.4f}")
+                return
+        else:  # SHORT
+            if current_price <= position['take_profit']:
+                await self.bot_engine.close_position(f"Take profit hit @ ${current_price:.4f}")
+                return
     
     async def run(self):
         """Main AI trading loop"""
@@ -85,17 +113,23 @@ class AITradingBot:
                 # 2. Get current position
                 position = await self.bot_engine.get_current_position()
                 
-                # 3. Get performance
+                # 3. Check position exits first (stop loss/take profit)
+                await self.check_position_exits(position, market_data)
+                
+                # Re-check position after potential exit
+                position = await self.bot_engine.get_current_position()
+                
+                # 4. Get performance
                 performance = await self.bot_engine.get_performance_metrics()
                 
-                # 4. AI autonomous decision
+                # 5. AI autonomous decision
                 decision = await self.llm_engine.make_decision(
                     market_data=market_data,
                     position=position,
                     performance=performance
                 )
                 
-                # 5. Risk validation
+                # 6. Risk validation
                 validated_decision = await self.risk_manager.validate_decision(
                     decision=decision,
                     market_data=market_data,
@@ -103,22 +137,25 @@ class AITradingBot:
                     performance=performance
                 )
                 
-                # 6. Execute if not waiting
+                # 7. Execute if not waiting
                 if validated_decision['action'] != 'WAIT':
                     await self.bot_engine.execute_decision(validated_decision)
                 
-                # 7. Log AI status
+                # 8. Log AI status
                 await self._log_ai_status(market_data, position, validated_decision)
                 
-                # 8. Periodic AI learning save
-                if self.loop_count % 50 == 0:
+                # 9. Periodic AI learning save
+                if self.loop_count % 20 == 0:  # Save more frequently
                     self.llm_engine.save_patterns()
+                    logger.info(f"💾 Patterns saved (loop {self.loop_count})")
                 
-                # 9. Sleep
+                # 10. Sleep
                 await asyncio.sleep(self.config.LOOP_INTERVAL)
                 
             except Exception as e:
                 logger.error(f"❌ Loop error: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
                 await asyncio.sleep(10)
     
     async def _log_ai_status(self, market_data, position, decision):
@@ -126,16 +163,15 @@ class AITradingBot:
         price = market_data.get('price', 0)
         indicators = market_data.get('indicators', {})
         
-        status = f"💹 {self.config.SYMBOL}: ${price:.4f} | RSI: {indicators.get('rsi', 0):.0f}"
+        status = f"#{self.loop_count} ${price:.4f} | RSI: {indicators.get('rsi', 0):.0f} | Vol: {indicators.get('volume_ratio', 1):.1f}x"
         
         if position:
             pnl = position.get('unrealized_pnl', 0)
             pnl_pct = position.get('pnl_percent', 0)
-            status += f" | {position['side']} | PnL: ${pnl:.2f} ({pnl_pct:.1f}%)"
-        else:
-            status += " | No position"
+            duration = position.get('duration_seconds', 0) / 60
+            status += f" | {position['side']} PnL: ${pnl:.2f} ({pnl_pct:.1f}%) {duration:.0f}m"
         
-        status += f" | AI: {decision['action']}"
+        status += f" | {decision['action']}"
         
         if decision.get('confidence'):
             status += f" ({decision['confidence']:.0%})"
@@ -144,13 +180,13 @@ class AITradingBot:
         stats = self.llm_engine.get_decision_stats()
         patterns = stats.get('patterns_learned', 0)
         if patterns > 0:
-            status += f" | 🧠 {patterns} patterns"
+            status += f" | 🧠 {patterns}"
         
         logger.info(status)
         
-        # Log AI reasoning every 10 loops
-        if self.loop_count % 10 == 0:
-            logger.info(f"🤖 AI Reasoning: {decision.get('reason', 'No reason')}")
+        # Log detailed info every 10 loops
+        if self.loop_count % 10 == 0 and decision.get('reason'):
+            logger.info(f"   → {decision.get('reason')}")
     
     async def cleanup(self):
         """Cleanup on shutdown"""
@@ -169,15 +205,23 @@ class AITradingBot:
         stats = self.llm_engine.get_decision_stats()
         runtime = (datetime.now() - self.start_time).total_seconds() / 60
         
+        logger.info("=" * 60)
         logger.info("📊 AI Performance Summary:")
         logger.info(f"   Runtime: {runtime:.1f} minutes")
-        logger.info(f"   Total decisions: {self.loop_count}")
+        logger.info(f"   Total loops: {self.loop_count}")
         logger.info(f"   Patterns learned: {stats.get('patterns_learned', 0)}")
-        logger.info(f"   Trade outcomes: {stats.get('trade_outcomes', 0)}")
+        logger.info(f"   Trades completed: {len(self.bot_engine.trade_history)}")
+        
+        if self.bot_engine.trade_history:
+            wins = len([t for t in self.bot_engine.trade_history if t['pnl'] > 0])
+            total = len(self.bot_engine.trade_history)
+            logger.info(f"   Win rate: {wins}/{total} ({wins/total*100:.0f}%)")
+            logger.info(f"   Total P&L: ${self.bot_engine.performance_data['total_pnl']:.2f}")
         
         if stats.get('action_distribution'):
-            logger.info(f"   Decision distribution: {stats['action_distribution']}")
+            logger.info(f"   Decisions: {stats['action_distribution']}")
         
+        logger.info("=" * 60)
         logger.info("✅ Cleanup complete")
 
 
@@ -195,6 +239,8 @@ async def main():
         await bot.run()
     except Exception as e:
         logger.error(f"❌ Critical error: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return 1
     finally:
         # Cleanup
@@ -204,8 +250,11 @@ async def main():
 
 
 if __name__ == "__main__":
-    logger.info("🤖 Starting True AI Autonomous Trading Bot")
-    logger.info("🧠 This bot learns from every trade and improves over time")
+    logger.info("=" * 60)
+    logger.info("🤖 True AI Autonomous Trading Bot")
+    logger.info("🧠 Pattern-based learning with LLM assist")
+    logger.info("📈 Learns from every trade outcome")
+    logger.info("=" * 60)
     
     exit_code = asyncio.run(main())
     sys.exit(exit_code)

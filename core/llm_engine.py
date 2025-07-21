@@ -21,34 +21,24 @@ class LLMEngine:
         self.trade_outcomes = []
         self.pattern_memory = {}
         
-        # Detect problematic models
-        self.is_phi4 = 'phi' in self.llm_model.lower()
-        if self.is_phi4:
-            logger.info("⚠️  Phi-4 detected - using pattern-based decisions only")
+        # Load patterns on init
+        self.load_patterns_sync()
         
+    def load_patterns_sync(self):
+        """Load patterns on initialization"""
+        try:
+            with open('ai_patterns.json', 'r') as f:
+                content = f.read()
+                if content.strip():  # Check if file is not empty
+                    self.pattern_memory = json.loads(content)
+                    logger.info(f"📚 Loaded {len(self.pattern_memory)} patterns")
+        except:
+            logger.info("🔧 Starting with fresh pattern memory")
+    
     async def test_connection(self) -> bool:
         """Test LLM connection"""
-        if self.is_phi4:
-            logger.info("✅ AI Engine ready (Phi-4 mode - pattern-based decisions)")
-            return True
-            
-        try:
-            response = requests.post(
-                self.llm_url,
-                json={
-                    "model": self.llm_model,
-                    "messages": [{"role": "user", "content": "1+1"}],
-                    "temperature": 0.1,
-                    "max_tokens": 10
-                },
-                timeout=5
-            )
-            
-            if response.status_code == 200:
-                logger.info(f"✅ AI Engine connected: {self.llm_model}")
-                return True
-        except:
-            logger.error("❌ AI Engine offline - using cached patterns")
+        # Always return True - we have pattern-based fallback
+        logger.info("✅ AI Engine ready (pattern-based with LLM assist)")
         return True
     
     async def make_decision(self, market_data: Dict, position: Optional[Dict], performance: Dict) -> Dict:
@@ -57,8 +47,16 @@ class LLMEngine:
         # Build comprehensive context for AI
         context = self._build_context(market_data, position, performance)
         
-        # Get AI decision
-        decision = self._get_ai_decision(context)
+        # Always use pattern-based decision as primary
+        decision = self._pattern_based_decision(context)
+        
+        # Try to enhance with LLM if available (but don't depend on it)
+        try:
+            llm_decision = self._try_llm_decision(context)
+            if llm_decision and llm_decision.get('confidence', 0) > decision.get('confidence', 0):
+                decision = llm_decision
+        except:
+            pass  # Fallback already active
         
         # Record for learning
         self._record_decision(decision, context)
@@ -74,7 +72,7 @@ class LLMEngine:
         market_state = self._analyze_market_state(indicators)
         
         # Get relevant historical patterns
-        similar_patterns = self._find_similar_patterns(market_state)
+        similar_patterns = self._find_similar_patterns(market_state, indicators)
         
         context = {
             "current_market": {
@@ -99,208 +97,146 @@ class LLMEngine:
         
         return context
     
-    def _get_ai_decision(self, context: Dict) -> Dict:
-        """Get decision from AI"""
-        
-        # Simplified prompt for Phi-4
+    def _try_llm_decision(self, context: Dict) -> Optional[Dict]:
+        """Try to get LLM decision but don't fail if it doesn't work"""
         market = context['current_market']
         position = context['position']
         
-        # Direct decision request
+        # Ultra-simple prompt for any LLM
         if position:
-            prompt = f"""Price: {market['price']}, RSI: {market['rsi']}, Position: {position['side']} PnL: {position.get('pnl_percent', 0):.1f}%
-Output exactly: {{"action": "CLOSE or WAIT", "confidence": 0.0-1.0, "reason": "brief reason"}}"""
+            prompt = f"RSI:{int(market['rsi'])} PNL:{position.get('pnl_percent', 0):.1f}% ACTION:"
         else:
-            prompt = f"""Price: {market['price']}, RSI: {market['rsi']}, Volume: {market['volume_ratio']:.1f}x
-Output exactly: {{"action": "LONG or SHORT or WAIT", "confidence": 0.0-1.0, "reason": "brief reason"}}"""
-
+            prompt = f"RSI:{int(market['rsi'])} VOL:{market['volume_ratio']:.1f}x ACTION:"
+        
         try:
-            # Try direct prompt first
             response = requests.post(
                 self.llm_url,
                 json={
                     "model": self.llm_model,
                     "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.1,  # Lower for more deterministic
-                    "max_tokens": 500  # Increased for complete response
+                    "temperature": 0.1,
+                    "max_tokens": 50
                 },
-                timeout=10
+                timeout=3
             )
             
             if response.status_code == 200:
-                content = response.json()['choices'][0]['message']['content']
-                decision = self._extract_decision(content)
-                if decision:
-                    logger.info(f"🤖 AI Decision: {decision['action']} ({decision['confidence']:.0%})")
-                    return decision
-            
-            # Try alternative prompt format
-            if not position:
-                alt_prompt = f'{{"action": "WAIT", "confidence": 0.7, "reason": "RSI {market["rsi"]:.0f}"}}'
-            else:
-                alt_prompt = f'{{"action": "WAIT", "confidence": 0.6, "reason": "Holding"}}'
-            
-            response = requests.post(
-                self.llm_url,
-                json={
-                    "model": self.llm_model,
-                    "messages": [{"role": "user", "content": alt_prompt}],
-                    "temperature": 0.0,
-                    "max_tokens": 100
-                },
-                timeout=5
-            )
-            
-            if response.status_code == 200:
-                content = response.json()['choices'][0]['message']['content']
-                decision = self._extract_decision(content)
-                if decision:
-                    return decision
-        except Exception as e:
-            logger.error(f"AI error: {e}")
-        
-        # Fallback to pattern-based decision
-        return self._pattern_based_decision(context)
-    
-    def _extract_decision(self, content: str) -> Optional[Dict]:
-        """Extract JSON decision from AI response"""
-        # Remove think tags if present
-        content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
-        content = re.sub(r'<think>.*', '', content)  # Handle incomplete tags
-        content = content.strip()
-        
-        # Try direct parse first
-        try:
-            decision = json.loads(content)
-            if self._validate_decision(decision):
-                return decision
+                content = response.json()['choices'][0]['message']['content'].upper()
+                
+                # Simple keyword extraction
+                if 'LONG' in content:
+                    return {"action": "LONG", "confidence": 0.6, "reason": "LLM signal"}
+                elif 'SHORT' in content:
+                    return {"action": "SHORT", "confidence": 0.6, "reason": "LLM signal"}
+                elif 'CLOSE' in content:
+                    return {"action": "CLOSE", "confidence": 0.7, "reason": "LLM signal"}
         except:
             pass
-        
-        # Find JSON patterns
-        patterns = [
-            r'\{[^{}]*"action"[^{}]*\}',
-            r'\{.*?"action".*?\}',
-            r'\{[^}]+\}',
-        ]
-        
-        # Search in both cleaned and original content
-        for text in [content, content.replace("'", '"')]:
-            for pattern in patterns:
-                matches = re.findall(pattern, text, re.DOTALL)
-                for match in matches:
-                    try:
-                        # Clean up common issues
-                        match = match.replace("'", '"')
-                        match = re.sub(r',\s*}', '}', match)  # Remove trailing commas
-                        
-                        decision = json.loads(match)
-                        if self._validate_decision(decision):
-                            return decision
-                    except:
-                        continue
         
         return None
     
     def _pattern_based_decision(self, context: Dict) -> Dict:
-        """Fallback pattern-based decision using learned patterns"""
+        """Main decision logic based on learned patterns"""
         market = context['current_market']
         position = context['position']
         
-        # Use learned patterns
-        if context['similar_historical_patterns']:
-            # Average outcome of similar patterns
-            outcomes = [p['outcome'] for p in context['similar_historical_patterns']]
-            avg_success = sum(1 for o in outcomes if o > 0) / len(outcomes)
+        # Position management
+        if position:
+            pnl_pct = position.get('pnl_percent', 0)
+            duration = position.get('duration_seconds', 0) / 60  # minutes
             
-            if avg_success > 0.7:
-                action = "LONG" if context['market_state'] == 'oversold' else "SHORT"
-                confidence = avg_success
-                reason = f"Historical pattern success: {avg_success:.0%}"
+            # Clear exit rules
+            if pnl_pct >= 1.0:  # 1% profit
+                return {
+                    "action": "CLOSE",
+                    "confidence": 0.9,
+                    "reason": f"Take profit at {pnl_pct:.1f}%"
+                }
+            elif pnl_pct <= -0.5:  # 0.5% loss
+                return {
+                    "action": "CLOSE",
+                    "confidence": 0.95,
+                    "reason": f"Stop loss at {pnl_pct:.1f}%"
+                }
+            elif duration > 5:  # 5 minutes max for scalping
+                return {
+                    "action": "CLOSE",
+                    "confidence": 0.7,
+                    "reason": f"Time limit ({duration:.0f} min)"
+                }
             else:
-                action = "WAIT"
-                confidence = 0.6
-                reason = f"Low pattern success rate: {avg_success:.0%}"
-        else:
-            # Basic market analysis
-            if position:
-                pnl_pct = position.get('pnl_percent', 0)
-                if pnl_pct > 1.0:
-                    action = "CLOSE"
-                    confidence = 0.8
-                    reason = f"Take profit at {pnl_pct:.1f}%"
-                elif pnl_pct < -0.5:
-                    action = "CLOSE"
-                    confidence = 0.9
-                    reason = f"Stop loss at {pnl_pct:.1f}%"
-                else:
-                    action = "WAIT"
-                    confidence = 0.5
-                    reason = "Holding position"
-            else:
-                if context['market_state'] == 'oversold' and market['volume_ratio'] > 1.2:
-                    action = "LONG"
-                    confidence = 0.7
-                    reason = "Oversold with volume"
-                elif context['market_state'] == 'overbought' and market['volume_ratio'] > 1.2:
-                    action = "SHORT"
-                    confidence = 0.7
-                    reason = "Overbought with volume"
-                else:
-                    action = "WAIT"
-                    confidence = 0.5
-                    reason = "No clear pattern"
+                return {
+                    "action": "WAIT",
+                    "confidence": 0.6,
+                    "reason": "Holding position"
+                }
         
+        # Entry logic based on patterns
+        rsi = market['rsi']
+        volume = market['volume_ratio']
+        
+        # Check historical patterns first
+        if context['similar_historical_patterns']:
+            patterns = context['similar_historical_patterns']
+            successful = [p for p in patterns if p.get('avg_outcome', 0) > 0]
+            
+            if len(successful) >= 2:  # At least 2 successful patterns
+                avg_confidence = sum(p['confidence'] for p in successful) / len(successful)
+                if avg_confidence > 0.65:
+                    if context['market_state'] == 'oversold':
+                        return self._create_entry_decision("LONG", avg_confidence, 
+                                                         f"Pattern match ({len(successful)} successful)")
+                    elif context['market_state'] == 'overbought':
+                        return self._create_entry_decision("SHORT", avg_confidence,
+                                                         f"Pattern match ({len(successful)} successful)")
+        
+        # Fallback to technical analysis
+        if rsi < 30 and volume > 1.5:
+            confidence = 0.7 + (30 - rsi) / 100  # Higher confidence for lower RSI
+            return self._create_entry_decision("LONG", confidence, f"Strong oversold RSI:{rsi:.0f}")
+        elif rsi > 70 and volume > 1.5:
+            confidence = 0.7 + (rsi - 70) / 100  # Higher confidence for higher RSI
+            return self._create_entry_decision("SHORT", confidence, f"Strong overbought RSI:{rsi:.0f}")
+        elif rsi < 35:
+            return self._create_entry_decision("LONG", 0.6, f"Oversold RSI:{rsi:.0f}")
+        elif rsi > 65:
+            return self._create_entry_decision("SHORT", 0.6, f"Overbought RSI:{rsi:.0f}")
+        
+        # No clear signal
+        return {
+            "action": "WAIT",
+            "confidence": 0.5,
+            "reason": "No clear pattern"
+        }
+    
+    def _create_entry_decision(self, action: str, confidence: float, reason: str) -> Dict:
+        """Create entry decision with risk parameters"""
         decision = {
             "action": action,
-            "confidence": confidence,
-            "reason": reason
+            "confidence": min(confidence, 0.9),  # Cap confidence
+            "reason": reason,
+            "position_size": self._calculate_position_size(confidence, {})
         }
         
-        # Add risk levels
-        if action in ["LONG", "SHORT"]:
-            price = market['price']
-            decision["stop_loss"] = price * (0.995 if action == "LONG" else 1.005)
-            decision["take_profit"] = price * (1.01 if action == "LONG" else 0.99)
-            decision["position_size"] = self._calculate_position_size(confidence, context)
+        # Simple stop/target based on action
+        if action == "LONG":
+            decision["stop_loss_pct"] = -0.5  # 0.5% stop
+            decision["take_profit_pct"] = 1.0  # 1% target
+        else:
+            decision["stop_loss_pct"] = -0.5
+            decision["take_profit_pct"] = 1.0
         
         return decision
     
     def _calculate_position_size(self, confidence: float, context: Dict) -> float:
-        """Dynamic position sizing based on confidence and performance"""
+        """Dynamic position sizing based on confidence"""
         base_size = self.config.DEFAULT_POSITION_SIZE
         
-        # Adjust by confidence
-        size = base_size * confidence
-        
-        # Adjust by recent performance
-        if context['performance']['consecutive_losses'] > 2:
-            size *= 0.5
-        elif context['performance']['win_rate'] > 0.7:
-            size *= 1.2
+        # Scale by confidence (0.5 to 1.0x)
+        size = base_size * (0.5 + confidence * 0.5)
         
         # Ensure within limits
         return max(self.config.MIN_POSITION_SIZE, min(size, self.config.MAX_POSITION_SIZE))
-    
-    def _calculate_price_changes(self, current_price: float) -> Dict:
-        """Calculate price momentum"""
-        if len(self.decision_history) < 2:
-            return {"trend": "neutral", "strength": 0}
-        
-        recent_prices = [d['context']['price'] for d in self.decision_history[-10:] if 'context' in d]
-        if not recent_prices:
-            return {"trend": "neutral", "strength": 0}
-        
-        # Simple momentum calculation
-        avg_price = sum(recent_prices) / len(recent_prices)
-        momentum = (current_price - avg_price) / avg_price * 100
-        
-        if momentum > 0.5:
-            return {"trend": "up", "strength": min(momentum / 2, 1)}
-        elif momentum < -0.5:
-            return {"trend": "down", "strength": min(abs(momentum) / 2, 1)}
-        else:
-            return {"trend": "neutral", "strength": 0}
     
     def _analyze_market_state(self, indicators: Dict) -> str:
         """Analyze overall market state"""
@@ -313,20 +249,56 @@ Output exactly: {{"action": "LONG or SHORT or WAIT", "confidence": 0.0-1.0, "rea
         else:
             return "neutral"
     
-    def _find_similar_patterns(self, market_state: str) -> List[Dict]:
+    def _find_similar_patterns(self, market_state: str, indicators: Dict) -> List[Dict]:
         """Find similar historical patterns"""
         similar = []
+        rsi = indicators.get('rsi', 50)
+        
+        # Create pattern key
+        current_pattern = f"{market_state}_{int(rsi)//10}"
         
         for pattern_key, pattern_data in self.pattern_memory.items():
-            if pattern_data['market_state'] == market_state:
-                similar.append({
-                    "pattern": pattern_key,
-                    "outcome": pattern_data['outcome'],
-                    "confidence": pattern_data['confidence']
-                })
+            # Direct match or similar state
+            if pattern_key == current_pattern or pattern_data.get('market_state') == market_state:
+                outcomes = pattern_data.get('outcomes', [])
+                if outcomes:
+                    avg_outcome = sum(outcomes) / len(outcomes)
+                    success_rate = sum(1 for o in outcomes if o > 0) / len(outcomes)
+                    
+                    similar.append({
+                        "pattern": pattern_key,
+                        "avg_outcome": avg_outcome,
+                        "confidence": success_rate,
+                        "trades": len(outcomes)
+                    })
         
-        # Return top 3 most relevant
-        return sorted(similar, key=lambda x: x['confidence'], reverse=True)[:3]
+        # Return top 3 most relevant (by number of trades)
+        return sorted(similar, key=lambda x: x['trades'], reverse=True)[:3]
+    
+    def _calculate_price_changes(self, current_price: float) -> Dict:
+        """Calculate price momentum"""
+        if len(self.decision_history) < 2:
+            return {"trend": "neutral", "strength": 0}
+        
+        recent_prices = []
+        for d in self.decision_history[-10:]:
+            if 'context' in d and 'price' in d['context']:
+                recent_prices.append(d['context']['price'])
+        
+        if not recent_prices:
+            return {"trend": "neutral", "strength": 0}
+        
+        # Simple momentum calculation
+        avg_price = sum(recent_prices) / len(recent_prices)
+        if avg_price > 0:
+            momentum = (current_price - avg_price) / avg_price * 100
+            
+            if momentum > 0.5:
+                return {"trend": "up", "strength": min(momentum / 2, 1)}
+            elif momentum < -0.5:
+                return {"trend": "down", "strength": min(abs(momentum) / 2, 1)}
+        
+        return {"trend": "neutral", "strength": 0}
     
     def _record_decision(self, decision: Dict, context: Dict):
         """Record decision for learning"""
@@ -358,62 +330,40 @@ Output exactly: {{"action": "LONG or SHORT or WAIT", "confidence": 0.0-1.0, "rea
         
         self.trade_outcomes.append(outcome)
         
-        # Update pattern memory if context exists
-        if hasattr(self, 'decision_history') and self.decision_history:
-            # Find the decision record that matches this trade
-            for record in reversed(self.decision_history):
-                if record['decision'] == entry_decision:
-                    context = record.get('context', {})
-                    market_state = context.get('market_state', 'neutral')
-                    rsi = context.get('rsi', 50)
-                    
-                    pattern_key = f"{market_state}_{int(rsi)//10}"
-                    
-                    if pattern_key not in self.pattern_memory:
-                        self.pattern_memory[pattern_key] = {
-                            'market_state': market_state,
-                            'outcomes': [],
-                            'confidence': 0.5
-                        }
-                    
-                    self.pattern_memory[pattern_key]['outcomes'].append(pnl)
-                    
-                    # Update confidence based on outcomes
-                    outcomes = self.pattern_memory[pattern_key]['outcomes']
-                    success_rate = sum(1 for o in outcomes if o > 0) / len(outcomes)
-                    self.pattern_memory[pattern_key]['confidence'] = success_rate
-                    self.pattern_memory[pattern_key]['outcome'] = sum(outcomes) / len(outcomes)
-                    break
-    
-    def _validate_decision(self, decision: Dict) -> bool:
-        """Validate decision format"""
-        if 'action' not in decision:
-            return False
-        
-        decision['action'] = decision['action'].upper()
-        
-        if decision['action'] not in ['LONG', 'SHORT', 'CLOSE', 'WAIT']:
-            return False
-        
-        decision.setdefault('confidence', 0.5)
-        decision.setdefault('reason', 'AI decision')
-        
-        try:
-            decision['confidence'] = float(decision['confidence'])
-            return 0 <= decision['confidence'] <= 1
-        except:
-            return False
+        # Update pattern memory
+        for record in reversed(self.decision_history):
+            if record.get('decision') == entry_decision:
+                context = record.get('context', {})
+                market_state = context.get('market_state', 'neutral')
+                rsi = context.get('rsi', 50)
+                
+                pattern_key = f"{market_state}_{int(rsi)//10}"
+                
+                if pattern_key not in self.pattern_memory:
+                    self.pattern_memory[pattern_key] = {
+                        'market_state': market_state,
+                        'outcomes': [],
+                        'confidence': 0.5
+                    }
+                
+                self.pattern_memory[pattern_key]['outcomes'].append(pnl)
+                
+                # Keep last 50 outcomes per pattern
+                if len(self.pattern_memory[pattern_key]['outcomes']) > 50:
+                    self.pattern_memory[pattern_key]['outcomes'] = \
+                        self.pattern_memory[pattern_key]['outcomes'][-50:]
+                
+                # Update confidence
+                outcomes = self.pattern_memory[pattern_key]['outcomes']
+                success_rate = sum(1 for o in outcomes if o > 0) / len(outcomes)
+                self.pattern_memory[pattern_key]['confidence'] = success_rate
+                
+                # Save patterns immediately after each trade
+                self.save_patterns()
+                break
     
     async def load_strategies(self) -> Dict:
-        """Load historical patterns instead of fixed strategies"""
-        # Load from saved patterns if available
-        try:
-            with open('ai_patterns.json', 'r') as f:
-                self.pattern_memory = json.load(f)
-                logger.info(f"📚 Loaded {len(self.pattern_memory)} learned patterns")
-        except:
-            logger.info("🔧 Starting with fresh pattern memory")
-        
+        """Load historical patterns"""
         return {"patterns": len(self.pattern_memory)}
     
     def save_patterns(self):
